@@ -1,0 +1,1047 @@
+/* Design system, transcribed from the reference site's computed values.
+ *
+ * Structure that matters (measured at a 1280px viewport):
+ *   page-grid : 12 columns of 72px, gutter 27px, max-width 75.94rem (1215px),
+ *               padding 54px top / 27px sides, centered.
+ *   nav       : columns 1-2, vertical list, gap 5px, links 24px line boxes,
+ *               muted colour, underlined with -0.06em offset.
+ *   main      : columns 3-12 (963px). Inside it prose is constrained to ~666px.
+ *   footer    : columns 3-12, flex space-between, 32px icon targets, radius 6px.
+ *
+ * Typography: humanist sans (the reference ships a custom face whose declared
+ * fallback is IBM Plex Sans; that is what an unfamiliar machine will resolve to,
+ * so the stack keeps it first). Body 16px at 1.5 line-height. Muted secondary
+ * text is one step down.
+ *
+ * Colour: a warm paper/dark pair driven by light-dark(), so the browser's own
+ * preference decides without a theme toggle.
+ */
+
+/* Fonts.
+ *
+ * The reference renders Latin in MD Lórien, a commercial typeface (Mass-Driver,
+ * rented via Fontstand). It cannot be redistributed, so it is not bundled here.
+ * What *is* reproduced is the reference's own fallback declaration: MD Lórien
+ * Fallback is Georgia with explicit metric overrides, which is exactly what the
+ * reference itself renders on any machine that does not have MD Lórien installed.
+ * Those numbers below are copied from its stylesheet, so the two pages agree on
+ * line pitch and glyph widths in the fallback case.
+ *
+ * IBM Plex Sans / Mono are SIL OFL 1.1 and self-hosted: the campus network may
+ * not reach a font CDN, and a webfont that fails mid-screening would reflow the
+ * page. Subsets match the reference's.
+ */
+
+@font-face {
+  font-family: "MD Lorien Fallback";
+  src: local(Georgia);
+  font-weight: 100 900;
+  font-style: normal;
+  size-adjust: 97.7891%;
+  ascent-override: 90.8077%;
+  descent-override: 31.9054%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "MD Lorien Fallback";
+  src: local("Georgia Italic"), local(Georgia-Italic);
+  font-weight: 100 900;
+  font-style: italic;
+  size-adjust: 86.3861%;
+  ascent-override: 102.794%;
+  descent-override: 36.1169%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/IBMPlexSans-VariableFont_wdth_wght.woff2") format("woff2");
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/IBMPlexSans-Italic-VariableFont_wdth_wght.woff2") format("woff2");
+  font-weight: 100 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/IBMPlexSans-LatinExt-VariableFont_wght.woff2") format("woff2");
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+100-2FF, U+300-36F, U+1D00-1DBF, U+1E??, U+20A0-20C0, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/IBMPlexMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+
+  --font-sans: "MD Lorien", "MD Lorien Fallback", "IBM Plex Sans", "Shippori Mincho B1",
+    "IBM Plex Sans Fallback", "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC",
+    "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "IBM Plex Mono Fallback", ui-monospace, SFMono-Regular,
+    Menlo, "Courier New", monospace;
+
+  /* Neutrals, warm. */
+  --background-l0: light-dark(#faf4ed, #11100e);
+  --background-l1: light-dark(#ede7df, #1d1b19);
+  --background-l2: light-dark(#e0dad2, #282622);
+  --background-l3: light-dark(#d4cdc5, #34312c);
+  --background-l6: light-dark(#aea79e, #5a544b);
+
+  --foreground-l0: light-dark(#332b21, #feead0);
+  --foreground-l1: light-dark(#3d352b, #eedbc3);
+  --foreground-l3: light-dark(#524a40, #cebfa9);
+  --foreground-l5: light-dark(#686056, #afa391);
+
+  --tone-red: light-dark(#ce2c31, #ff9592);
+  --tone-orange: light-dark(#cc4e00, #ffa057);
+  --tone-yellow: light-dark(#9e6c00, #f5e147);
+  --tone-green: light-dark(#218358, #3dd68c);
+  --tone-blue: light-dark(#0d74ce, #70b8ff);
+
+  --background: var(--background-l0);
+  --foreground: var(--foreground-l0);
+  --muted: var(--background-l2);
+  --muted-foreground: var(--foreground-l5);
+  --border: var(--background-l3);
+  --accent: var(--tone-green);
+
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+
+  /* Type scale. */
+  --step--1: clamp(0.8889rem, 0.8542rem + 0.1736vw, 0.9375rem);
+  --step-0: clamp(1rem, 0.9107rem + 0.4464vw, 1.125rem);
+  --step-1: clamp(1.125rem, 0.9643rem + 0.8036vw, 1.35rem);
+  --step-2: clamp(1.2656rem, 1.0125rem + 1.2656vw, 1.62rem);
+  --step-3: clamp(1.4238rem, 1.0523rem + 1.8578vw, 1.944rem);
+
+  /* Space scale. */
+  --space-2xs: 0.25rem;
+  --space-xs: clamp(0.75rem, 0.7038rem + 0.2255vw, 0.875rem);
+  --space-s: clamp(1rem, 0.9538rem + 0.2255vw, 1.125rem);
+  --space-m: clamp(1.5rem, 1.4307rem + 0.3382vw, 1.6875rem);
+  --space-l: clamp(2rem, 1.9076rem + 0.451vw, 2.25rem);
+  --space-xl: clamp(3rem, 2.8613rem + 0.6764vw, 3.375rem);
+
+  /* Grid. */
+  --grid-max-width: 75.94rem;
+  --grid-columns: 12;
+  --grid-gutter: clamp(1rem, 0.7458rem + 1.2401vw, 1.6875rem);
+  --page-offset-top: clamp(3rem, 2.8613rem + 0.6764vw, 3.375rem);
+  --page-offset-bottom: clamp(1.5rem, 1.4307rem + 0.3382vw, 1.6875rem);
+
+  /* Prose measure inside the content column. */
+  --measure: 41.625rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Root scaling, as the reference does it: the page grows slightly with the
+     viewport without ever leaving the 16-19.5px band. Without this the type steps
+     below resolve 2px larger than the reference at every common width. */
+  font-size: clamp(100%, 77.78% + 0.2778vw, 122.22%);
+  scrollbar-gutter: stable;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  /* Body text inherits the root scale (16px at a 1280 viewport). The type steps
+     are for headings and lead-ins only; using step-0 here made every paragraph
+     2px larger than the reference. */
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ------------------------------------------------------------------ grid */
+
+page-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--grid-columns), minmax(0, 1fr));
+  gap: var(--grid-gutter);
+  width: 100%;
+  max-width: var(--grid-max-width);
+  margin: 0 auto;
+  padding: var(--page-offset-top) var(--grid-gutter) 0;
+}
+
+site-nav {
+  grid-column: 1 / 3;
+  /* Sticky rail. The reference sets the rail's first item slightly below the top
+     of the content column (measured 37.6px at a 1280 viewport), which keeps the
+     nav from competing with the page's first line. */
+  align-self: start;
+  position: sticky;
+  top: var(--page-offset-top);
+  margin-top: 2.35rem;
+}
+
+site-main {
+  grid-column: 3 / -1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-m);
+}
+
+site-footer {
+  grid-column: 3 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-s);
+  margin: var(--space-s) 0 var(--page-offset-bottom);
+}
+
+/* ------------------------------------------------------------------- nav */
+
+site-nav ul {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+site-nav li {
+  line-height: 1.5;
+}
+
+site-nav a {
+  color: var(--muted-foreground);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: -0.06em;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.2s ease, color 0.2s ease;
+}
+
+site-nav a:hover,
+site-nav a[aria-current="page"] {
+  color: var(--foreground);
+  text-decoration-color: currentColor;
+}
+
+/* ------------------------------------------------------------------ text */
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 400;
+  line-height: 1.25;
+  letter-spacing: -0.011em;
+}
+
+h1 {
+  font-size: var(--step-2);
+}
+
+h2 {
+  font-size: var(--step-1);
+}
+
+h3 {
+  font-size: var(--step-0);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: -0.06em;
+  text-decoration-color: var(--muted-foreground);
+  transition: text-decoration-color 0.2s ease;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* Secondary prose sits one step down and muted, as the reference does. */
+.prose {
+  max-width: var(--measure);
+  color: var(--muted-foreground);
+}
+
+.lede {
+  font-size: var(--step-0);
+  color: var(--muted-foreground);
+  max-width: var(--measure);
+}
+
+.meta {
+  font-size: var(--step--1);
+  color: var(--muted-foreground);
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------- controls */
+
+.field {
+  display: flex;
+  gap: var(--space-xs);
+  max-width: var(--measure);
+}
+
+input[type="text"],
+input[type="file"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.35em 0;
+}
+
+input[type="text"]::placeholder {
+  color: var(--muted-foreground);
+}
+
+input[type="text"]:focus-visible,
+input[type="file"]:focus-visible {
+  outline: none;
+  border-bottom-color: var(--foreground);
+}
+
+button {
+  font: inherit;
+  color: var(--foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.3em 0.75em;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--foreground);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+button.quiet {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  padding-inline: 0;
+}
+
+button.quiet:hover:not(:disabled) {
+  color: var(--foreground);
+}
+
+button.danger {
+  color: var(--tone-red);
+  border-color: color-mix(in oklab, var(--tone-red) 30%, transparent);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* ------------------------------------------------------------------ list */
+
+entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-m);
+  max-width: var(--measure);
+}
+
+entry-list > a,
+entry-row {
+  display: flex;
+  align-items: baseline;
+  gap: 1.125rem;
+  margin-inline: calc(var(--space-xs) * -1);
+  padding: 0.35rem var(--space-xs);
+  border-radius: var(--radius-md);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 0.15s ease;
+}
+
+entry-list > a:hover,
+entry-row:hover {
+  background: var(--background-l1);
+}
+
+entry-list > a:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 1px;
+}
+
+entry-list > a:hover .entry-title {
+  text-decoration-color: currentColor;
+}
+
+/* State label occupies a narrow leading column, like a date would. */
+entry-state {
+  flex: 0 0 4.5rem;
+  font-size: var(--step--1);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+entry-state[data-tone="live"] {
+  color: var(--tone-green);
+}
+
+entry-state[data-tone="ready"] {
+  color: var(--tone-blue);
+}
+
+entry-state[data-tone="busy"] {
+  color: var(--tone-yellow);
+}
+
+entry-state[data-tone="failed"] {
+  color: var(--tone-red);
+}
+
+entry-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.entry-title {
+  font-size: var(--step-0);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: -0.06em;
+  text-decoration-color: transparent;
+  overflow-wrap: anywhere;
+}
+
+entry-list > a:hover .entry-title,
+entry-row:hover .entry-title {
+  text-decoration-color: var(--muted-foreground);
+}
+
+.entry-meta {
+  font-size: var(--step--1);
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  color: var(--muted-foreground);
+  font-size: var(--step-0);
+}
+
+/* ------------------------------------------------------------------ stage */
+
+stage-frame {
+  display: block;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+stage-frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+#veil::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tone-green);
+  margin-bottom: 0.75rem;
+  animation: veil-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes veil-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #veil::before { animation: none; opacity: 1; }
+}
+
+#veil[hidden] {
+  display: none;
+}
+
+#veil h3 {
+  font-size: var(--step-1);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+#veil p {
+  max-width: 34ch;
+  color: rgba(247, 241, 230, 0.66);
+  font-size: var(--step--1);
+}
+
+/* ------------------------------------------------------------------ stats */
+
+/* One quiet meta line instead of a grid of boxes: this page is about the
+   picture, so the numbers should read as a caption under it, not as chrome. */
+.stat-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1.5rem;
+  max-width: var(--measure);
+  margin: 0;
+  padding: var(--space-s) 0 0;
+  border-top: 1px solid var(--border);
+}
+
+/* `display: flex` above beats the UA `[hidden]` rule, so state it explicitly. */
+.stat-line[hidden] {
+  display: none;
+}
+
+.stat-line div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.stat-line dt {
+  font-size: var(--step--1);
+  color: var(--muted-foreground);
+}
+
+.stat-line dd {
+  margin: 0;
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+stat-list, .stat-line-legacy {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--space-s) var(--space-m);
+  max-width: var(--measure);
+  margin: 0;
+  padding: var(--space-s) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+stat-list div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+stat-list dt {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+
+stat-list dd {
+  margin: 0;
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+#p2p {
+  color: var(--tone-green);
+}
+
+/* ------------------------------------------------------------------ owner */
+
+owner-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+  max-width: var(--measure);
+  padding-top: var(--space-s);
+  border-top: 1px solid var(--border);
+}
+
+owner-panel[hidden] {
+  display: none;
+}
+
+owner-panel h2 {
+  font-size: var(--step--1);
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+
+.hint {
+  font-size: var(--step--1);
+  color: var(--muted-foreground);
+}
+
+.error {
+  font-size: var(--step--1);
+  color: var(--tone-red);
+}
+
+.error:empty {
+  display: none;
+}
+
+.progress {
+  max-width: var(--measure);
+  height: 1px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--foreground);
+  transition: width 0.25s ease;
+}
+
+/* ----------------------------------------------------------------- footer */
+
+.attribution {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  font-size: var(--step--1);
+  color: var(--muted-foreground);
+}
+
+.icon-links {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0 -0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.icon-links a,
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-md);
+  border: 0;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.icon-links a:hover,
+.icon-button:hover {
+  color: var(--foreground);
+  background: var(--background-l1);
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 0.05em 0.3em;
+  border-radius: var(--radius-xs);
+  background: var(--background-l2);
+}
+
+/* ----------------------------------------------------------------- mobile */
+
+@media (width < 48rem) {
+  page-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-s);
+    padding: calc(var(--space-l)) var(--grid-gutter) 0;
+  }
+
+  site-nav,
+  site-main,
+  site-footer {
+    grid-column: 1 / -1;
+  }
+
+  site-nav {
+    position: static;
+    margin-top: 0;
+  }
+
+  site-nav ul {
+    flex-direction: row;
+    gap: var(--space-s);
+  }
+
+  site-main {
+    gap: var(--space-m);
+  }
+
+  entry-state {
+    flex-basis: 3.75rem;
+  }
+}
+
+
+/* ------------------------------------------------------------------- plyr */
+
+/* Plyr ships its own palette; align it with the page instead of fighting it. */
+:root {
+  --plyr-color-main: var(--tone-green);
+  --plyr-video-background: #000;
+  --plyr-menu-background: var(--background);
+  --plyr-menu-color: var(--foreground);
+  --plyr-menu-border-color: var(--border);
+  --plyr-control-radius: var(--radius-sm);
+  --plyr-font-family: var(--font-sans);
+  --plyr-font-size-small: 0.8125rem;
+  --plyr-font-size-base: 0.875rem;
+  --plyr-font-size-large: 1rem;
+}
+
+.plyr {
+  height: 100%;
+  border-radius: var(--radius-lg);
+}
+
+.plyr video,
+.plyr__video-wrapper {
+  border-radius: var(--radius-lg);
+}
+
+.plyr--video .plyr__controls {
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
+}
+
+
+/* ------------------------------------------------------- people and sync */
+
+.people {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-width: var(--measure);
+  padding-top: var(--space-s);
+  border-top: 1px solid var(--border);
+}
+
+.people[hidden] {
+  display: none;
+}
+
+.people h2 {
+  font-size: var(--step--1);
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+
+.people ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--step--1);
+}
+
+.people li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.people li.is-host span {
+  color: var(--foreground);
+}
+
+.tag {
+  font-style: normal;
+  font-size: 0.75rem;
+  padding: 0.05em 0.4em;
+  border-radius: var(--radius-xs);
+  background: var(--background-l2);
+  color: var(--muted-foreground);
+}
+
+.tag.warn {
+  background: color-mix(in oklab, var(--tone-yellow) 22%, transparent);
+  color: var(--tone-yellow);
+}
+
+.host-away span {
+  color: var(--tone-yellow);
+}
+
+select {
+  font: inherit;
+  font-size: var(--step--1);
+  color: var(--foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.2em 0.4em;
+}
+
+/* Sync bar: a single line above the stats, not a modal. It has to be ignorable
+   while watching, so it never covers the picture. */
+.sync-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  max-width: var(--measure);
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background-l1);
+  font-size: var(--step--1);
+}
+
+.sync-bar[hidden] {
+  display: none;
+}
+
+.sync-bar span {
+  flex: 1 1 12rem;
+}
+
+.sync-bar button {
+  font-size: var(--step--1);
+  padding: 0.25em 0.6em;
+}
+
+
+/* ---------------------------------------------------------------- danmaku */
+
+/* The layer lives inside Plyr's container, so it is present in fullscreen and
+   carries no page chrome of its own. */
+.danmaku-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+  contain: strict;
+}
+
+.danmaku-item {
+  position: absolute;
+  left: 0;
+  white-space: nowrap;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  font-weight: 500;
+  color: #fff;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 6px rgba(0, 0, 0, 0.55);
+  will-change: transform;
+  animation-name: danmaku-scroll;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes danmaku-scroll {
+  from { transform: translate3d(var(--danmaku-from), 0, 0); }
+  to { transform: translate3d(var(--danmaku-to), 0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .danmaku-item { animation-duration: 0s !important; opacity: 0; }
+}
+
+/* Composer sits under the player, never over the picture. */
+.danmaku-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  max-width: var(--measure);
+}
+
+.danmaku-bar input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.35em 0;
+}
+
+.danmaku-bar input:focus-visible {
+  outline: none;
+  border-bottom-color: var(--foreground);
+}
+
+.danmaku-bar input:disabled {
+  opacity: 0.5;
+}
+
+/* Sidebar transcript: inside the page, so fullscreen hides it automatically. */
+.danmaku-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  max-width: var(--measure);
+  padding-top: var(--space-s);
+  border-top: 1px solid var(--border);
+}
+
+.danmaku-panel h2 {
+  font-size: var(--step--1);
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+
+.danmaku-panel ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+  font-size: var(--step--1);
+  scrollbar-width: thin;
+  content-visibility: auto;
+}
+
+.danmaku-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.danmaku-who {
+  flex: 0 0 auto;
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+
+.danmaku-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------- private rooms */
+
+/* The password gate replaces the screening surface until access is granted:
+   the player, the danmaku stream and the participant list all wait. */
+.lock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+  padding: var(--space-m) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.lock[hidden] {
+  display: none;
+}
+
+body.locked stage-frame,
+body.locked .danmaku-bar,
+body.locked .danmaku-panel,
+body.locked .people,
+body.locked .stat-line,
+body.locked .sync-bar,
+body.locked #copyLink {
+  display: none;
+}

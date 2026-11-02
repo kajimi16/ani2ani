@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>放映会 · 校内同步观影</title>
+    <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/portal.css" />
+  </head>
+  <body class="portal">
+    <header class="p-header">
+      <div class="p-header-inner">
+        <a class="p-logo" href="/" aria-label="放映会首页">
+          <span class="p-logo-mark" aria-hidden="true"></span>
+          <span>放映会</span>
+        </a>
+
+        <nav class="p-nav" aria-label="主导航">
+          <a href="/" aria-current="page">首页</a>
+          <button type="button" data-open-onboard>使用指南</button>
+        </nav>
+
+        <form class="p-search" role="search" autocomplete="off">
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="p-icon">
+            <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+            <path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+          <input id="search" type="search" placeholder="搜索房间标题" aria-label="搜索房间标题" />
+        </form>
+
+        <div class="p-actions">
+          <span class="p-capacity" id="capacity" title="本机可用空间">—</span>
+          <form class="p-nameform" id="nameForm" hidden>
+            <input id="nameInline" type="text" maxlength="24" placeholder="你的名字" aria-label="你的名字" />
+          </form>
+          <button class="p-avatar" id="avatar" type="button" aria-label="设置你的名字" title="设置你的名字">放</button>
+          <button class="p-primary" id="openCreate" type="button" data-open-create>创建房间</button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="p-subnav" aria-label="分类">
+      <button class="p-chip is-active" data-filter="all" type="button">全部</button>
+      <button class="p-chip" data-filter="live" type="button">放映中</button>
+      <button class="p-chip" data-filter="ready" type="button">待开播</button>
+      <button class="p-chip" data-filter="busy" type="button">处理中</button>
+      <button class="p-chip" data-filter="ended" type="button">已结束</button>
+    </nav>
+
+    <p class="p-search-msg" id="searchMsg" hidden></p>
+
+    <main class="p-main">
+      <section class="p-focus-wrap" id="focusWrap" aria-label="焦点直播">
+        <div class="p-empty-focus">还没有正在放映的房间。</div>
+      </section>
+
+      <aside class="p-side">
+        <section class="p-follow" id="follow" hidden>
+          <div class="p-section-head">
+            <h2 id="followTitle">最近看过</h2>
+            <a class="p-more" href="#feed">查看更多 <span aria-hidden="true">›</span></a>
+          </div>
+          <ul class="p-avatars" id="avatars"></ul>
+        </section>
+
+        <div class="p-side-grid" id="sideGrid"></div>
+      </aside>
+    </main>
+
+    <section class="p-feed" id="feed" aria-label="推荐直播">
+      <div class="p-section-head">
+        <h2>推荐直播</h2>
+        <span class="p-count" id="feedCount"></span>
+      </div>
+      <div class="p-feed-grid" id="feedGrid"></div>
+      <div class="p-sentinel" id="sentinel"></div>
+      <p class="p-feed-end" id="feedEnd" hidden></p>
+    </section>
+
+    <footer class="p-footer">
+      <span id="disk">载入中…</span>
+      <button class="p-quiet" id="refresh" type="button">刷新</button>
+    </footer>
+
+    <dialog class="p-dialog" id="dialog">
+      <form method="dialog" class="p-dialog-body" id="createForm">
+        <h2 id="dialogTitle">创建房间</h2>
+        <p class="p-dialog-lede">上传想要放映的片源即可创建属于你的放映室</p>
+        <label>
+          <span>房间标题</span>
+          <input id="title" type="text" maxlength="80" placeholder="今晚放什么" />
+        </label>
+        <label>
+          <span>你的名字</span>
+          <input id="name" type="text" maxlength="24" placeholder="显示在观看列表里" />
+        </label>
+        <fieldset class="p-visibility">
+          <legend>谁能进</legend>
+          <label class="p-radio">
+            <input type="radio" name="visibility" value="public" checked />
+            <span><b>公开</b><em>出现在首页，任何人可进</em></span>
+          </label>
+          <label class="p-radio">
+            <input type="radio" name="visibility" value="private" />
+            <span><b>私密</b><em>不上首页，凭密码进入</em></span>
+          </label>
+        </fieldset>
+        <label id="passwordRow" hidden>
+          <span>房间密码</span>
+          <input id="password" type="password" maxlength="32" placeholder="4–32 个字符，进房间时要输入" />
+        </label>
+        <p class="p-hint" id="dialogHint">名字只存在这台设备上。</p>
+        <div class="p-dialog-actions">
+          <button class="p-quiet" type="button" data-close-dialog>取消</button>
+          <button class="p-primary" id="create" type="submit">创建房间</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="p-onboard" id="onboard">
+      <div class="p-onboard-body">
+        <button class="p-onboard-close" type="button" data-close-onboard aria-label="关闭">×</button>
+
+        <div class="mg-stage">
+          <section class="mg-scene is-active" data-scene="0" aria-hidden="true">
+            <div class="mg-file"><em>片源.mp4</em><span class="mg-file-bar"></span></div>
+            <div class="mg-rail"><i></i></div>
+            <div class="mg-box">
+              <span class="mg-box-title">房间</span>
+              <span class="mg-progress"><i></i></span>
+              <span class="mg-badge">待开播</span>
+            </div>
+          </section>
+
+          <section class="mg-scene" data-scene="1" aria-hidden="true">
+            <div class="mg-screen">
+              <span class="mg-dm" style="--row: 0; --delay: 0s">一起看！</span>
+              <span class="mg-dm" style="--row: 1; --delay: 0.55s">这段笑死</span>
+              <span class="mg-dm" style="--row: 2; --delay: 1.1s">前方高能</span>
+              <span class="mg-dm" style="--row: 0; --delay: 1.75s">同一个帧 ✓</span>
+            </div>
+            <div class="mg-input"><span>一起用弹幕交流</span></div>
+          </section>
+
+          <section class="mg-scene" data-scene="2" aria-hidden="true">
+            <div class="mg-timeline">
+              <span class="mg-track"></span>
+              <span class="mg-pin mg-pin-host"><b>房主</b></span>
+              <span class="mg-pin mg-pin-you"><b>你</b></span>
+            </div>
+            <div class="mg-toast">落后房主 12 秒</div>
+            <button class="mg-align" type="button" tabindex="-1">对齐到房主</button>
+          </section>
+        </div>
+
+        <div class="p-onboard-copy">
+          <h2 id="onboardTitle">创建房间</h2>
+          <p id="onboardText">上传想要放映的片源即可创建属于你的放映室。</p>
+        </div>
+
+        <div class="p-onboard-foot">
+          <div class="p-onboard-dots" id="onboardDots">
+            <button class="is-active" type="button" aria-label="第 1 步"></button>
+            <button type="button" aria-label="第 2 步"></button>
+            <button type="button" aria-label="第 3 步"></button>
+          </div>
+          <button class="p-quiet" type="button" data-close-onboard>跳过</button>
+          <button class="p-primary" id="onboardNext" type="button">下一步</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script type="module">
+      const capacityEl = document.getElementById("capacity");
+      const diskEl = document.getElementById("disk");
+      const focusWrap = document.getElementById("focusWrap");
+      const sideGrid = document.getElementById("sideGrid");
+      const feedGrid = document.getElementById("feedGrid");
+      const feedCount = document.getElementById("feedCount");
+      const feedEnd = document.getElementById("feedEnd");
+      const sentinel = document.getElementById("sentinel");
+      const followEl = document.getElementById("follow");
+      const avatarsEl = document.getElementById("avatars");
+      const followTitle = document.getElementById("followTitle");
+      const searchInput = document.getElementById("search");
+      const avatarEl = document.getElementById("avatar");
+      const dialog = document.getElementById("dialog");
+      const titleInput = document.getElementById("title");
+      const nameInput = document.getElementById("name");
+      const createButton = document.getElementById("create");
+      const dialogHint = document.getElementById("dialogHint");
+
+      const PAGE_SIZE = 12;
+
+      const STATES = {
+        created: ["等待上传", "off"],
+        queued: ["排队中", "busy"],
+        uploading: ["上传中", "busy"],
+        transcoding: ["处理中", "busy"],
+        ready: ["待开播", "ready"],
+        live: ["放映中", "live"],
+        ended: ["已结束", "off"],
+        failed: ["失败", "failed"],
+      };
+
+      const state = { rooms: [], filter: "all", query: "", shown: PAGE_SIZE, disk: null };
+
+      function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"']/g, (c) =>
+          ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+        );
+      }
+
+      function relative(ms) {
+        const minutes = Math.round((Date.now() - ms) / 60000);
+        if (minutes < 1) return "刚刚";
+        if (minutes < 60) return `${minutes} 分钟前`;
+        const hours = Math.round(minutes / 60);
+        if (hours < 24) return `${hours} 小时前`;
+        return `${Math.round(hours / 24)} 天前`;
+      }
+
+      /** Which sub-nav bucket a room falls in. */
+      function bucket(room) {
+        if (room.status === "live") return "live";
+        if (room.status === "ready") return "ready";
+        if (room.status === "ended" || room.status === "failed") return "ended";
+        return "busy";
+      }
+
+      /** Live first, then ready, then the rest; each group newest first. */
+      const ORDER = { live: 0, ready: 1, transcoding: 2, queued: 3, uploading: 4, created: 5, ended: 6, failed: 7 };
+
+      function visibleRooms() {
+        const q = state.query.trim().toLowerCase();
+        return state.rooms
+          .filter((room) => state.filter === "all" || bucket(room) === state.filter)
+          .filter((room) => !q || String(room.title ?? "").toLowerCase().includes(q))
+          .sort((a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || b.createdAt - a.createdAt);
+      }
+
+      function statusText(room) {
+        return (STATES[room.status] ?? [room.status])[0];
+      }
+
+      function viewersText(room) {
+        if (room.status === "live") return `${room.viewers} 人在看`;
+        if (room.status === "transcoding" && room.progress) return `处理 ${(room.progress.percent * 100).toFixed(0)}%`;
+        if (room.status === "queued" && room.progress) return `排队第 ${room.progress.position ?? 1} 位`;
+        return relative(room.createdAt);
+      }
+
+      const EYE = `<svg viewBox="0 0 24 24" aria-hidden="true" class="p-icon"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/></svg>`;
+
+      function cover(room) {
+        return room.poster
+          ? `<img class="p-cover-img" src="${escapeHtml(room.poster)}" alt="" loading="lazy" decoding="async" />`
+          : `<span class="p-cover-blank" aria-hidden="true"></span>`;
+      }
+
+      function card(room) {
+        const [text, tone] = STATES[room.status] ?? [room.status, "off"];
+        const up = room.hostName ? escapeHtml(room.hostName) : "暂无房主";
+        const count =
+          room.status === "live"
+            ? `${EYE}${room.viewers}`
+            : `<span class="p-viewers-time">${escapeHtml(viewersText(room))}</span>`;
+        return `<a class="p-card" href="/r/${room.id}">
+          <div class="p-card-cover">
+            ${cover(room)}
+            <span class="p-badge" data-tone="${tone}">${escapeHtml(text)}</span>
+            <span class="p-viewers">${count}</span>
+            <span class="p-cat">${escapeHtml(room.status === "live" ? "同步放映" : text)}</span>
+          </div>
+          <p class="p-card-title">${escapeHtml(room.title || "未命名放映")}</p>
+          <p class="p-card-up">${up}</p>
+        </a>`;
+      }
+
+      function renderFocus(rooms) {
+        const room = rooms[0];
+        if (!room) {
+          focusWrap.innerHTML = `<div class="p-empty-focus">还没有正在放映的房间。点「创建房间」开一个。</div>`;
+          return;
+        }
+        const [text, tone] = STATES[room.status] ?? [room.status, "off"];
+        focusWrap.innerHTML = `<a class="p-focus" href="/r/${room.id}">
+          <div class="p-focus-stage">
+            ${cover(room)}
+            <div class="p-focus-top">
+              <span class="p-badge" data-tone="${tone}">${escapeHtml(text)}</span>
+              <span class="p-focus-clock">${escapeHtml(viewersText(room))}</span>
+            </div>
+            <span class="p-focus-play" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
+            </span>
+            <div class="p-focus-bottom">
+              <h2>${escapeHtml(room.title || "未命名放映")}</h2>
+              <p>${room.hostName ? `房主 ${escapeHtml(room.hostName)}` : "暂无房主"} · ${escapeHtml(room.sourceName ?? "未上传片源")}</p>
+            </div>
+          </div>
+          <div class="p-focus-strip">
+            <span>${room.bitrateKbps ? `${room.bitrateKbps} kbps` : "码率未知"}</span>
+            <span>${room.segments ? `${room.segments} 分片` : "无分片"}</span>
+            <span>${room.durationSec ? `${Math.round(room.durationSec / 60)} 分钟` : "时长未知"}</span>
+            <span class="p-focus-cta">进入放映 ›</span>
+          </div>
+        </a>`;
+      }
+
+      function renderAvatars(rooms) {
+        const recent = JSON.parse(localStorage.getItem("recentRooms") ?? "[]");
+        if (!Array.isArray(recent) || recent.length === 0) {
+          followEl.hidden = true;
+          return;
+        }
+        const byId = new Map(rooms.map((room) => [room.id, room]));
+        const items = recent.map((entry) => byId.get(entry.id)).filter(Boolean).slice(0, 12);
+        if (items.length === 0) {
+          followEl.hidden = true;
+          return;
+        }
+        const liveCount = items.filter((room) => room.status === "live").length;
+        followTitle.textContent = liveCount > 0 ? `最近看过 · ${liveCount} 个正在放映` : "最近看过";
+        followEl.hidden = false;
+        avatarsEl.innerHTML = items
+          .map((room) => {
+            const label = escapeHtml(room.title || "未命名放映");
+            return `<li><a href="/r/${room.id}" title="${label}" class="${room.status === "live" ? "is-live" : ""}">
+              <span class="p-avatar-face">${room.poster ? `<img src="${escapeHtml(room.poster)}" alt="" loading="lazy" />` : escapeHtml((room.title || "放").slice(0, 1))}</span>
+              <span class="p-avatar-name">${label}</span>
+            </a></li>`;
+          })
+          .join("");
+      }
+
+      function renderSide(rooms) {
+        // Side grid is the live/ready slice; the feed below carries everything.
+        sideGrid.innerHTML = rooms.slice(0, 4).map(card).join("");
+      }
+
+      function renderFeed(rooms) {
+        if (rooms.length === 0) {
+          // Distinguish "nothing matches this filter" from "there is nothing at
+          // all yet", which is the first thing a new visitor sees.
+          const text = state.rooms.length === 0
+            ? "还没有房间。点右上角「创建房间」开一个。"
+            : "没有符合条件的房间。";
+          feedGrid.innerHTML = `<p class="p-feed-end">${text}</p>`;
+          feedCount.textContent = "";
+          sentinel.hidden = true;
+          feedEnd.hidden = true;
+          return;
+        }
+        const slice = rooms.slice(0, state.shown);
+        feedGrid.innerHTML = slice.map(card).join("");
+        feedCount.textContent = `${rooms.length} 个房间`;
+        const more = rooms.length > slice.length;
+        sentinel.hidden = !more;
+        feedEnd.hidden = more;
+        if (!more) feedEnd.textContent = "没有更多了";
+      }
+
+      function render() {
+        const rooms = visibleRooms();
+        renderFocus(rooms);
+        renderAvatars(rooms);
+        renderSide(rooms);
+        renderFeed(rooms);
+      }
+
+      function renderDisk(disk) {
+        state.disk = disk;
+        if (!disk) return;
+        const free = (disk.freeBytes / 1e9).toFixed(1);
+        const reserve = (disk.reserveBytes / 1e9).toFixed(1);
+        capacityEl.textContent = `${free} GB 可用`;
+        diskEl.innerHTML = `可用 <code>${free} GB</code>，保留 <code>${reserve} GB</code>`;
+      }
+
+      async function refresh() {
+        try {
+          const response = await fetch("/api/rooms", { cache: "no-store" });
+          const payload = await response.json();
+          state.rooms = payload.rooms ?? [];
+          renderDisk(payload.disk);
+          render();
+        } catch {
+          feedGrid.innerHTML = `<p class="p-feed-end">连不上服务器。</p>`;
+        }
+      }
+
+      /* -------------------------------------------------------- 使用指南浮层 */
+
+      // Shown once per browser on first visit, and reopenable from the nav.
+      // Each scene is a pure-CSS motion graphic; re-adding `is-active` restarts
+      // it, so stepping back and forth replays the animation instead of landing
+      // on a finished frame.
+      const onboard = document.getElementById("onboard");
+      const scenes = [...document.querySelectorAll(".mg-scene")];
+      const onboardDots = [...document.querySelectorAll("#onboardDots button")];
+      const onboardTitle = document.getElementById("onboardTitle");
+      const onboardText = document.getElementById("onboardText");
+      const onboardNext = document.getElementById("onboardNext");
+
+      const ONBOARD_COPY = [
+        { title: "创建房间", text: "上传想要放映的片源即可创建属于你的放映室。" },
+        { title: "弹幕体验", text: "进入你的房间，一起用弹幕交流吧。" },
+        { title: "同步播放", text: "进度与房主同步，当然也能自己回放精彩片段。" },
+      ];
+
+      let sceneIndex = 0;
+      let sceneTimer = null;
+
+      function showScene(index) {
+        sceneIndex = (index + scenes.length) % scenes.length;
+        scenes.forEach((el, i) => {
+          el.classList.remove("is-active");
+          if (i !== sceneIndex) return;
+          void el.offsetWidth; // force a style flush so the animation restarts
+          el.classList.add("is-active");
+        });
+        onboardDots.forEach((dot, i) => dot.classList.toggle("is-active", i === sceneIndex));
+        onboardTitle.textContent = ONBOARD_COPY[sceneIndex].title;
+        onboardText.textContent = ONBOARD_COPY[sceneIndex].text;
+        onboardNext.textContent = sceneIndex === scenes.length - 1 ? "知道了" : "下一步";
+      }
+
+      function startScenes() {
+        clearInterval(sceneTimer);
+        sceneTimer = setInterval(() => showScene(sceneIndex + 1), 5400);
+      }
+
+      function openOnboard() {
+        onboard.showModal();
+        showScene(0);
+        startScenes();
+      }
+
+      function closeOnboard() {
+        clearInterval(sceneTimer);
+        sceneTimer = null;
+        localStorage.setItem("onboardingSeen", "1");
+        onboard.close();
+      }
+
+      onboardNext.addEventListener("click", () => {
+        if (sceneIndex === scenes.length - 1) {
+          closeOnboard();
+          return;
+        }
+        showScene(sceneIndex + 1);
+        startScenes();
+      });
+
+      onboardDots.forEach((dot, index) =>
+        dot.addEventListener("click", () => {
+          showScene(index);
+          startScenes();
+        }),
+      );
+
+      document.querySelectorAll("[data-open-onboard]").forEach((el) =>
+        el.addEventListener("click", openOnboard),
+      );
+      document.querySelectorAll("[data-close-onboard]").forEach((el) =>
+        el.addEventListener("click", closeOnboard),
+      );
+      // Esc closes a <dialog> natively; record the visit either way.
+      onboard.addEventListener("close", () => {
+        clearInterval(sceneTimer);
+        localStorage.setItem("onboardingSeen", "1");
+      });
+
+      if (localStorage.getItem("onboardingSeen") !== "1") {
+        setTimeout(openOnboard, 500);
+      }
+
+      /* ------------------------------------------------------------ filters */
+
+      document.querySelectorAll("[data-filter]").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          document.querySelectorAll("[data-filter]").forEach((el) => el.classList.toggle("is-active", el === chip));
+          state.filter = chip.dataset.filter;
+          state.shown = PAGE_SIZE;
+          render();
+        });
+      });
+
+      // The search box filters as you type; Enter must not navigate. Without
+      // this the form submits a GET to `/`, which reloads the portal and drops
+      // the filter, the query and every card the user was looking at.
+      //
+      // It doubles as the door to private rooms: those are unlisted, so the only
+      // handle a visitor has is the password itself. Enter with no public match
+      // tries the query as a password.
+      const searchForm = document.querySelector(".p-search");
+      const searchMsg = document.getElementById("searchMsg");
+
+      function showSearchMsg(text) {
+        searchMsg.textContent = text;
+        searchMsg.hidden = !text;
+      }
+
+      searchForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const query = state.query.trim();
+        if (!query) return;
+        const publicMatch = state.rooms.some(
+          (room) => room.visibility !== "private" && String(room.title ?? "").toLowerCase().includes(query.toLowerCase()),
+        );
+        if (publicMatch) {
+          showSearchMsg("");
+          return;
+        }
+        showSearchMsg("正在用这个密码找房间…");
+        try {
+          const response = await fetch("/api/rooms/unlock", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ password: query }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            showSearchMsg(payload.error ?? "没有房间匹配，也不是有效的密码");
+            return;
+          }
+          location.href = payload.roomUrl;
+        } catch {
+          showSearchMsg("连不上服务器");
+        }
+      });
+
+      searchInput.addEventListener("input", () => {
+        state.query = searchInput.value;
+        state.shown = PAGE_SIZE;
+        render();
+        const query = state.query.trim();
+        showSearchMsg(
+          query.length >= 4 && visibleRooms().length === 0
+            ? "没有公开房间匹配。按 Enter 用这个密码进入私密房间。"
+            : "",
+        );
+      });
+
+      /* -------------------------------------------------------- infinite feed */
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) return;
+          const rooms = visibleRooms();
+          if (state.shown >= rooms.length) return;
+          state.shown += PAGE_SIZE;
+          renderFeed(rooms);
+        },
+        { rootMargin: "600px 0px" },
+      );
+      observer.observe(sentinel);
+
+      /* ------------------------------------------------------------- dialogs */
+
+      const passwordRow = document.getElementById("passwordRow");
+      const passwordInput = document.getElementById("password");
+
+      function paintVisibility() {
+        const visibility = document.querySelector('input[name="visibility"]:checked')?.value ?? "public";
+        passwordRow.hidden = visibility !== "private";
+      }
+
+      document.querySelectorAll('input[name="visibility"]').forEach((el) => el.addEventListener("change", paintVisibility));
+
+      document.querySelectorAll("[data-open-create]").forEach((el) =>
+        el.addEventListener("click", () => {
+          titleInput.value = "";
+          passwordInput.value = "";
+          document.querySelector('input[name="visibility"][value="public"]').checked = true;
+          paintVisibility();
+          nameInput.value = localStorage.getItem("displayName") || "";
+          dialogHint.textContent = nameInput.value ? "名字只存在这台设备上。" : "名字只存在这台设备上，留空也能看。";
+          dialog.showModal();
+          titleInput.focus();
+        }),
+      );
+
+      document.querySelectorAll("[data-close-dialog]").forEach((el) =>
+        el.addEventListener("click", () => el.closest("dialog").close()),
+      );
+
+      // Clicking the avatar opens a real field in the header instead of a native
+      // prompt(): the browser dialog is modal, unstyled and blocks the page.
+      const nameForm = document.getElementById("nameForm");
+      const nameInline = document.getElementById("nameInline");
+
+      // `.p-nameform` is `display:none` while hidden, so dropping `hidden` and
+      // adding the width class in one go would apply both in the same style
+      // recalculation and the transition would never run. Unhide, then let the
+      // browser paint a zero-width box before animating.
+      let nameCloseTimer = null;
+
+      function openNameEditor() {
+        clearTimeout(nameCloseTimer);
+        nameInline.value = localStorage.getItem("displayName") || "";
+        nameForm.hidden = false;
+        nameInline.focus();
+        nameInline.select();
+        requestAnimationFrame(() => nameForm.classList.add("is-open"));
+      }
+
+      function closeNameEditor() {
+        nameForm.classList.remove("is-open");
+        clearTimeout(nameCloseTimer);
+        nameCloseTimer = setTimeout(() => {
+          // If it was reopened during the transition, leave it up.
+          if (!nameForm.classList.contains("is-open")) nameForm.hidden = true;
+        }, 240);
+      }
+
+      function commitName() {
+        const value = nameInline.value.trim().slice(0, 24);
+        if (value) localStorage.setItem("displayName", value);
+        else localStorage.removeItem("displayName");
+        paintAvatar();
+        closeNameEditor();
+      }
+
+      avatarEl.addEventListener("click", () => {
+        if (nameForm.hidden) openNameEditor();
+        else commitName();
+      });
+
+      nameForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        commitName();
+      });
+
+      nameInline.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        closeNameEditor();
+      });
+
+      document.addEventListener("click", (event) => {
+        if (nameForm.hidden) return;
+        if (nameForm.contains(event.target) || event.target === avatarEl) return;
+        closeNameEditor();
+      });
+
+      function paintAvatar() {
+        const name = (localStorage.getItem("displayName") || "").trim();
+        avatarEl.textContent = name ? name.slice(0, 1) : "放";
+        avatarEl.title = name ? `名字：${name}` : "设置你的名字";
+      }
+
+      nameInput.addEventListener("input", () => {
+        const value = nameInput.value.trim().slice(0, 24);
+        if (value) localStorage.setItem("displayName", value);
+        else localStorage.removeItem("displayName");
+        paintAvatar();
+      });
+
+      createButton.addEventListener("click", async (event) => {
+        event.preventDefault();
+        createButton.disabled = true;
+        try {
+          const response = await fetch("/api/rooms", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              title: titleInput.value,
+              visibility: document.querySelector('input[name="visibility"]:checked')?.value ?? "public",
+              password: passwordInput.value,
+            }),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error ?? response.statusText);
+          }
+          const payload = await response.json();
+          localStorage.setItem(`room-token-${payload.room.id}`, payload.ownerToken);
+          location.href = payload.roomUrl;
+        } catch (error) {
+          createButton.disabled = false;
+          dialogHint.textContent = `创建失败：${error.message}`;
+        }
+      });
+
+      // Enter picks a candidate while the IME has a composition open. Firing
+      // create on that Enter creates the room with the pinyin still in the box,
+      // so the key has to stay with the input method until it commits.
+      let composing = false;
+      titleInput.addEventListener("compositionstart", () => {
+        composing = true;
+      });
+      titleInput.addEventListener("compositionend", () => {
+        setTimeout(() => {
+          composing = false;
+        }, 0);
+      });
+      titleInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        if (composing || event.isComposing || event.keyCode === 229) return;
+        createButton.click();
+      });
+
+      document.getElementById("refresh").addEventListener("click", refresh);
+
+      paintAvatar();
+      refresh();
+      setInterval(refresh, 5000);
+    </script>
+  </body>
+</html>

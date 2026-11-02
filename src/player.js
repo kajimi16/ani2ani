@@ -1,0 +1,704 @@
+// Player entry point. Bundled by esbuild into web/player.js.
+//
+// Room-aware: the room id comes from the URL (`/r/<id>`), and everything that must
+// not be shared between simultaneous screenings — the manifest, the swarm, the
+// playback clock — is derived from it. Two rooms showing the same file are two
+// separate swarms, because their viewers are at different moments.
+//
+// Measurement contract (read by scripts/verify-round.sh):
+//   window.__screening.stats()  -> cumulative counters, same shape as the POST body
+//   POST /api/report every second while playing
+// Counters are cumulative so a dropped POST is harmless: the server derives
+// per-window bytes from the difference between samples.
+
+import Hls from "hls.js";
+import Plyr from "plyr";
+import { createDanmaku } from "./danmaku.js";
+import { HlsJsP2PEngine } from "p2p-media-loader-hlsjs";
+
+const REPORT_INTERVAL_MS = 1000;
+const STUN_PORT = 3478;
+// Sync to the host's playhead, not to a wall clock.
+//
+// A fixed epoch cannot express the three things that actually happen in a room:
+// the leader pauses, the leader seeks, or a follower stalls. So the host reports
+// its position every second, and followers extrapolate from (position, timestamp).
+const SYNC_DRIFT_LIMIT_S = 3;
+// A stall is not a drift. Seeking to catch up while the decoder is still filling
+// makes it worse, so during a stall the lag is allowed to accumulate and the
+// viewer is asked, at this threshold, whether to jump forward.
+const STALL_REPORT_LAG_S = 5;
+// How long after a `waiting` event we still consider playback to be recovering.
+const STALL_GRACE_MS = 4000;
+const SYNC_POLL_MS = 1000;
+const STATUS_POLL_MS = 3000;
+
+const statusEl = document.getElementById("status");
+const p2pEl = document.getElementById("p2p");
+const peersEl = document.getElementById("peers");
+const downEl = document.getElementById("down");
+const upEl = document.getElementById("up");
+const segmentsEl = document.getElementById("segments");
+const roleEl = document.getElementById("role");
+const syncEl = document.getElementById("sync");
+const statLineEl = document.getElementById("statLine");
+
+const params = new URLSearchParams(location.search);
+
+// Display name, set on the home page and kept per browser. Not an account: it is
+// a label for the participants list so people can see who is driving.
+const displayName = (localStorage.getItem("displayName") || "").trim().slice(0, 24);
+
+/* -------------------------------------------------------------------- room */
+
+const roomId = (() => {
+  const match = location.pathname.match(/^\/r\/([a-z0-9]{4,32})\/?$/);
+  if (match) return match[1];
+  const query = params.get("room");
+  if (query) return query;
+  return null;
+})();
+
+const MANIFEST = roomId ? `/media/${roomId}/hls/index.m3u8` : "/hls/stream/index.m3u8";
+// Per-room swarm: viewers of different rooms must never exchange segments.
+const SWARM_ID = roomId ? `hitsz-room-${roomId}` : "hitsz-screening";
+
+const counters = {
+  downP2P: 0,
+  downHTTP: 0,
+  upP2P: 0,
+  segmentsP2P: 0,
+  segmentsHTTP: 0,
+};
+const peerIds = new Set();
+const peerId = randomPeerId();
+const p2pDisabled = params.get("p2p") === "off";
+// `once` is the default because a real screening must stop at the end rather than
+// silently restart. The 600 s test asset is the one case that wants to loop.
+const loopMode = params.get("loop") === "loop" || (!roomId && params.get("loop") !== "once");
+
+function randomPeerId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(10));
+  return `-ani2ani-${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function signalingUrl() {
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${location.host}/tracker`;
+}
+
+function stunUrl() {
+  return `stun:${location.hostname}:${STUN_PORT}`;
+}
+
+/* -------------------------------------------------------------- lead/follow */
+
+// Lead/follow roles — opt-in, default follow.
+//
+// Measured (N=6): the P2P engine's own demand window already spreads origin
+// requests across the swarm (worst peer 1.4x its fair share). Designating a lead
+// concentrated them to 4.5x on one machine for +1.6pp of P2P ratio, which is a
+// loss on WiFi: the concentrated machine is the one that chokes first. So follow
+// is the default and `?role=lead` is an operator tool for the degenerate case.
+const LEADER_BUFFER_S = 90;
+const FOLLOWER_BUFFER_S = 20;
+
+const role = params.get("role") === "lead" ? "lead" : "follow";
+const bufferTarget = role === "lead" ? LEADER_BUFFER_S : FOLLOWER_BUFFER_S;
+
+/* -------------------------------------------------------------------- video */
+
+const video = document.getElementById("video");
+video.muted = true;
+let userPaused = false;
+
+const HlsWithP2P = HlsJsP2PEngine.injectMixin(Hls);
+
+const hls = new HlsWithP2P({
+  maxBufferLength: bufferTarget,
+  maxMaxBufferLength: bufferTarget * 2,
+  backBufferLength: 60,
+  startLevel: -1,
+  p2p: {
+    core: {
+      swarmId: SWARM_ID,
+      announceTrackers: [signalingUrl()],
+      // Only the campus-local STUN is advertised: a server-reflexive candidate
+      // valid across HITSZ subnets, which mDNS host candidates cannot provide.
+      rtcConfig: { iceServers: [{ urls: stunUrl() }] },
+      // Prefetch horizons must stay well under a measurement's steady window,
+      // otherwise playback can advance for minutes with zero bytes moving.
+      // The HTTP horizon may never be smaller than the buffer: a peer whose
+      // neighbours cannot serve it has no other path.
+      httpDownloadTimeWindow: Math.max(60, bufferTarget),
+      p2pDownloadTimeWindow: Math.max(60, bufferTarget),
+      isP2PDisabled: p2pDisabled,
+    },
+    onHlsJsCreated(instance) {
+      const engine = instance.p2pEngine;
+
+      engine.addEventListener("onChunkDownloaded", (bytesLength, downloadSource) => {
+        if (downloadSource === "p2p") counters.downP2P += bytesLength;
+        else counters.downHTTP += bytesLength;
+      });
+      engine.addEventListener("onChunkUploaded", (bytesLength) => {
+        counters.upP2P += bytesLength;
+      });
+      engine.addEventListener("onSegmentLoaded", ({ downloadSource }) => {
+        if (downloadSource === "p2p") counters.segmentsP2P += 1;
+        else counters.segmentsHTTP += 1;
+      });
+      engine.addEventListener("onPeerConnect", ({ peerId: remoteId }) => peerIds.add(remoteId));
+      engine.addEventListener("onPeerClose", ({ peerId: remoteId }) => peerIds.delete(remoteId));
+      engine.addEventListener("onTrackerError", ({ error }) => {
+        statusEl.dataset.trackerError = String(error?.message ?? error);
+      });
+    },
+  },
+});
+
+// Plyr is a UI layer over the same <video> element — it does not load the stream.
+// That matters here: hls.js owns the MediaSource and p2p-media-loader wraps its
+// fragment loaders, so anything that swapped the media element for its own player
+// would quietly disable the P2P path. Plyr only builds controls around it.
+const plyr = new Plyr(video, {
+  controls: [
+    "play-large",
+    "play",
+    "progress",
+    "current-time",
+    "duration",
+    "mute",
+    "volume",
+    "settings",
+    "pip",
+    "fullscreen",
+  ],
+  settings: ["speed"],
+  speed: { selected: 1, options: [0.75, 1, 1.25, 1.5, 2] },
+  seekTime: 10,
+  keyboard: { focused: true, global: false },
+  tooltips: { controls: true, seek: true },
+  // The audience is watching a screening, not browsing: hide the big play button
+  // overlay once playback has started, and keep the controls unobtrusive.
+  hideControls: true,
+  resetOnEnd: false,
+  i18n: {
+    play: "播放",
+    pause: "暂停",
+    mute: "静音",
+    unmute: "取消静音",
+    settings: "设置",
+    speed: "速度",
+    normal: "正常",
+    pip: "画中画",
+    enterFullscreen: "全屏",
+    exitFullscreen: "退出全屏",
+    seek: "跳转",
+    volume: "音量",
+    playbackSpeed: "播放速度",
+  },
+});
+
+// Danmaku attaches to Plyr's container so it survives fullscreen; the sidebar is
+// a separate page element so fullscreen hides it for free.
+const danmaku = roomId
+  ? createDanmaku({
+      roomId,
+      name: displayName || null,
+      peerId,
+      videoTime: () => video.currentTime,
+      playerContainer: plyr.elements.container,
+      sidebar: document.getElementById("danmakuList"),
+    })
+  : null;
+
+hls.attachMedia(video);
+hls.on(Hls.Events.ERROR, (_event, data) => {
+  if (!data.fatal) return;
+  statusEl.dataset.hlsFatal = data.details ?? "unknown";
+  if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+  else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+});
+
+/* ----------------------------------------------------------- shared clock */
+
+// Shared playback clock.
+//
+// Without it, "open the page and watch together" only works if everyone reloads
+// at the same instant: a viewer joining 3 minutes late starts at 0, sees a
+// different frame, and needs segments nobody has cached. So the room publishes an
+// epoch and every viewer derives its position from it.
+//
+// In `once` mode the clock stops at the end instead of wrapping; in `loop` mode it
+// wraps, which is what makes the 600 s test asset reusable for repeated rounds.
+const syncEnabled = params.get("sync") !== "off";
+let roomState = null;
+let ended = false;
+
+// 'sync' follows the host; 'free' is when the viewer deliberately scrubbed away.
+let syncMode = "sync";
+let hostRef = null;
+let hostPeerId = null;
+let hostName = null;
+let lastStallAt = 0;
+let lagPromptShown = false;
+// A viewer arriving late, or rejoining after a reload, must land on the host's
+// frame immediately — that is not a stall and must not be treated as one. Only
+// drift that appears *after* we are in sync is eligible for the "ask first" path.
+let initialAligned = false;
+// Watching `startedAt` is how a restart reaches the host: followers re-anchor to
+// hostRef automatically, but the host follows nobody, so without this "开始放映"
+// again would leave the leader where it was and everyone else would follow.
+let lastStartedAt = null;
+// True while we are paused *because the host is paused*. Distinguishes our pause
+// from the viewer's, so resuming the host resumes the follower.
+let followingPause = false;
+// The autoplay watchdog exists for one narrow case: the browser blocked the
+// initial play because it was not a user gesture. Once playback has actually
+// started, a pause is deliberate — whether by the viewer or by us mirroring the
+// host — and retrying would make "host paused" impossible to implement.
+let hasPlayedOnce = false;
+// After the viewer declines to catch up, do not nag: stay quiet until they fall
+// another full threshold behind. Without this the prompt reappears every second.
+let lagPromptFloor = 0;
+// The position we last asked for, or null. A `seeking` event whose position
+// matches this is ours; anything else is the viewer. Comparing positions is more
+// reliable than a boolean, which a coalesced second seek could consume early.
+let programmedSeek = null;
+
+function isHost() {
+  return Boolean(hostPeerId) && hostPeerId === peerId;
+}
+
+/** Where the host is right now, extrapolated through its own playback. */
+function hostTarget() {
+  if (!hostRef || !Number.isFinite(hostRef.videoTime)) return null;
+  const elapsed = hostRef.playing ? (Date.now() - hostRef.at) / 1000 : 0;
+  const target = hostRef.videoTime + elapsed;
+  if (!Number.isFinite(video.duration) || video.duration <= 0) return Math.max(0, target);
+  return Math.min(Math.max(0, target), video.duration);
+}
+
+function seekTo(target) {
+  programmedSeek = target;
+  statusEl.dataset.syncSeeks = String(Number(statusEl.dataset.syncSeeks ?? 0) + 1);
+  video.currentTime = target;
+}
+
+function reportLag(lag) {
+  statusEl.dataset.lag = lag.toFixed(1);
+  document.dispatchEvent(new CustomEvent("sync-lag", { detail: { lag, mode: syncMode } }));
+}
+
+/**
+ * One sync tick.
+ *
+ * Three distinct jobs, deliberately separated: keep a synced viewer aligned, stay
+ * out of the way of a viewer who scrubbed, and never "fix" a stall by seeking.
+ */
+/**
+ * Mirror the host's play/pause.
+ *
+ * Position alone is not enough: if the host pauses and followers keep playing,
+ * every follower drifts ahead, gets pulled back by the drift correction, and the
+ * room stutters against a leader who is simply paused. Playback state is part of
+ * what "synchronised" means.
+ */
+function applyHostPlayState() {
+  if (!roomId || isHost() || syncMode === "free" || !hostRef) return;
+  if (hostRef.playing) {
+    if (video.paused && !userPaused) {
+      followingPause = false;
+      video.play().catch(() => {});
+    }
+  } else if (!video.paused && !followingPause) {
+    followingPause = true;
+    video.pause();
+  }
+}
+
+function syncTick() {
+  if (!roomId || isHost() || !hostRef) return;
+  const target = hostTarget();
+  if (target === null) return;
+
+  applyHostPlayState();
+
+  const lag = target - video.currentTime;
+  reportLag(lag);
+
+  if (syncMode === "free") return;
+
+  if (!initialAligned) {
+    initialAligned = true;
+    lagPromptShown = false;
+    seekTo(target);
+    return;
+  }
+
+  const stalling = Date.now() - lastStallAt < STALL_GRACE_MS || video.readyState < 3;
+
+  const wantsPrompt = lag >= STALL_REPORT_LAG_S && lag >= lagPromptFloor + STALL_REPORT_LAG_S;
+
+  if (stalling) {
+    // Let the buffer refill; a seek here would restart the download and make the
+    // viewer fall further behind.
+    if (wantsPrompt && !lagPromptShown) {
+      lagPromptShown = true;
+      document.dispatchEvent(new CustomEvent("sync-lag-prompt", { detail: { lag } }));
+    }
+    return;
+  }
+
+  // Behind after the fact (a stall that recovered, or the host jumped ahead):
+  // ask, do not jump.
+  if (lag >= STALL_REPORT_LAG_S) {
+    if (wantsPrompt && !lagPromptShown) {
+      lagPromptShown = true;
+      document.dispatchEvent(new CustomEvent("sync-lag-prompt", { detail: { lag } }));
+    }
+    return;
+  }
+
+  lagPromptShown = false;
+  lagPromptFloor = 0;
+
+  if (Math.abs(lag) <= SYNC_DRIFT_LIMIT_S) return;
+
+  // The host paused or rewound and we are ahead: that is a normal correction, not
+  // a stall, so align silently.
+  seekTo(target);
+}
+
+/** User asked to align again (the "同步到房主" button). */
+function alignToHost() {
+  const target = hostTarget();
+  if (target === null) return;
+  lagPromptShown = false;
+  lagPromptFloor = 0;
+  initialAligned = true;
+  followingPause = false;
+  userPaused = false;
+  syncMode = "sync";
+  seekTo(target);
+  document.dispatchEvent(new CustomEvent("sync-mode", { detail: { mode: syncMode } }));
+}
+
+/** User chose to stay where they are after a stall prompt. */
+function ignoreLag() {
+  lagPromptShown = false;
+  const target = hostTarget();
+  if (target !== null) lagPromptFloor = Math.max(0, target - video.currentTime);
+  document.dispatchEvent(new CustomEvent("sync-mode", { detail: { mode: syncMode } }));
+}
+
+async function refreshRoom() {
+  if (!roomId) {
+    // Legacy single stream has no host and no room: it keeps the round clock that
+    // scripts/measure-round.sh drives, and the sync loop stays out of its way.
+    try {
+      const response = await fetch("/api/health", { cache: "no-store" });
+      const payload = await response.json();
+      const epochMs = Number(payload?.sync?.epochMs);
+      if (Number.isFinite(epochMs) && epochMs > 0) {
+        hostRef = { videoTime: Math.max(0, (Date.now() - epochMs) / 1000), at: Date.now(), playing: true };
+      }
+    } catch {
+      /* control plane unreachable: start at zero */
+    }
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/rooms/${roomId}`, { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json();
+    roomState = payload.room;
+    const previousHost = hostPeerId;
+    hostPeerId = roomState?.hostPeerId ?? null;
+    hostName = roomState?.hostName ?? null;
+    hostRef = roomState?.hostRef ?? null;
+    const startedAt = roomState?.startedAt ?? null;
+    if (startedAt && startedAt !== lastStartedAt) {
+      lastStartedAt = startedAt;
+      if (isHost()) {
+        seekTo(0);
+        video.play().catch(() => {});
+      } else {
+        initialAligned = false;
+      }
+    }
+
+    if (hostPeerId !== previousHost) {
+      // New leader: re-land on their frame instead of creeping toward it.
+      initialAligned = false;
+      lagPromptShown = false;
+      syncMode = "sync";
+    }
+    statusEl.dataset.host = isHost() ? "1" : "0";
+    document.dispatchEvent(new CustomEvent("room-state", { detail: roomState }));
+
+    // Footer carries the facts about the file rather than a standing warning.
+    // Subtitle under the room name: status and head count, so the header reads as
+    // one block instead of a title plus a distant chip in the nav rail.
+    const sub = document.getElementById("roomSub");
+    if (sub) {
+      const label = {
+        created: "等待上传",
+        queued: "排队中",
+        uploading: "上传中",
+        transcoding: "处理中",
+        ready: "待开播",
+        live: "放映中",
+        ended: "已结束",
+        failed: "处理失败",
+      }[roomState?.status] ?? "";
+      const bits = [label];
+      if (roomState?.viewers) bits.push(`${roomState.viewers} 人在看`);
+      sub.textContent = bits.filter(Boolean).join(" · ");
+    }
+
+    const footer = document.getElementById("footerMeta");
+    if (footer) {
+      const parts = [];
+      if (roomState?.segments) parts.push(`${roomState.segments} 个分片`);
+      if (roomState?.durationSec) parts.push(`${Math.round(roomState.durationSec / 60)} 分钟`);
+      if (roomState?.bitrateKbps) parts.push(`${(roomState.bitrateKbps / 1000).toFixed(1)} Mbps`);
+      footer.textContent = parts.join(" · ");
+    }
+
+    if (roomState?.status === "live" && hls.url === undefined) {
+      hls.loadSource(MANIFEST);
+    }
+  } catch {
+    /* keep the last known state */
+  }
+}
+
+/* --------------------------------------------------------------- playback */
+
+let sourceLoaded = false;
+function loadSource() {
+  if (sourceLoaded) return;
+  sourceLoaded = true;
+  hls.loadSource(MANIFEST);
+}
+
+video.addEventListener("loadedmetadata", () => {
+  if (!isHost()) syncTick();
+});
+video.addEventListener("durationchange", () => {
+  if (!isHost()) syncTick();
+});
+
+// A `waiting` event is the honest signal that playback has stalled; the sync loop
+// must not interpret the resulting lag as "the viewer is behind".
+video.addEventListener("waiting", () => {
+  lastStallAt = Date.now();
+  statusEl.dataset.stalled = "1";
+});
+video.addEventListener("playing", () => {
+  delete statusEl.dataset.stalled;
+});
+
+// A seek the user performed (not one we issued) means they deliberately left the
+// host's position, so stop pulling them back until they ask for it.
+video.addEventListener("seeking", () => {
+  const ours = programmedSeek !== null && Math.abs(video.currentTime - programmedSeek) < 1.5;
+  if (ours) {
+    programmedSeek = null;
+    return;
+  }
+  programmedSeek = null;
+  if (!isHost()) {
+    syncMode = "free";
+    lagPromptShown = false;
+    document.dispatchEvent(new CustomEvent("sync-mode", { detail: { mode: syncMode } }));
+  }
+});
+
+video.addEventListener("pause", () => {
+  if (video.ended || userPaused || ended) return;
+  // A pause we issued, or one in free mode, is intentional; retrying playback
+  // here is what would turn "host paused" into a fight with the watchdog.
+  if (followingPause || syncMode === "free" || hasPlayedOnce) return;
+  statusEl.dataset.pauseEvents = String(Number(statusEl.dataset.pauseEvents ?? 0) + 1);
+  setTimeout(() => {
+    if (!userPaused && !video.ended && !ended) video.play().catch(() => {});
+  }, 250);
+});
+video.addEventListener("playing", () => {
+  statusEl.dataset.phase = "playing";
+  hasPlayedOnce = true;
+});
+video.addEventListener("canplay", () => {
+  if (!userPaused && !ended) {
+    video.play().catch((error) => {
+      statusEl.dataset.playError = String(error);
+    });
+  }
+});
+video.addEventListener("ended", () => {
+  ended = true;
+  statusEl.dataset.phase = "ended";
+  document.dispatchEvent(new CustomEvent("screening-ended"));
+});
+video.addEventListener("click", () => {
+  if (video.paused) {
+    userPaused = false;
+    ended = false;
+    video.play().catch(() => {});
+  } else {
+    userPaused = true;
+    // Pausing by hand is a deliberate detach, same as scrubbing.
+    if (!isHost()) {
+      syncMode = "free";
+      document.dispatchEvent(new CustomEvent("sync-mode", { detail: { mode: syncMode } }));
+    }
+    video.pause();
+  }
+});
+
+// Monotonic playback progress. `video.currentTime` resets when the clock loops or
+// the viewer seeks, so it cannot answer "did this viewer actually play".
+let playedSeconds = 0;
+let lastPosition = null;
+video.addEventListener("timeupdate", () => {
+  const now = video.currentTime;
+  if (lastPosition !== null && now > lastPosition && now - lastPosition < 2) {
+    playedSeconds += now - lastPosition;
+  }
+  lastPosition = now;
+});
+video.addEventListener("seeking", () => {
+  lastPosition = null;
+});
+
+// No separate unmute button: autoplay is only granted while muted, and Plyr's
+// own volume control is the gesture that lifts it. A second control pinned to the
+// bottom centre landed straight on top of Plyr's bar.
+
+/* ------------------------------------------------------------------ report */
+
+function snapshot() {
+  return {
+    peerId,
+    roomId: roomId ?? "default",
+    ...counters,
+    peers: peerIds.size,
+    lead: role === "lead" ? 1 : 0,
+    videoTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+    buffered: video.buffered.length > 0 ? video.buffered.end(video.buffered.length - 1) : 0,
+    syncDrift: Number(statusEl.dataset.syncDrift ?? 0),
+    playedSec: playedSeconds,
+    name: displayName || null,
+    playing: !video.paused && !video.ended,
+    syncMode,
+  };
+}
+
+function render() {
+  const downAll = counters.downP2P + counters.downHTTP;
+  const ratio = downAll > 0 ? (counters.downP2P / downAll) * 100 : 0;
+  const total = counters.segmentsP2P + counters.segmentsHTTP;
+
+  // Operating numbers (P2P ratio, drift, buffer target) belong to whoever is
+  // driving the room. The block ships hidden in the markup and only the host
+  // ever unhides it. `isHost()` compares against `hostPeerId`, which itself only
+  // refreshes on the room poll (STATUS_POLL_MS = 3 s), so a hand-off can take up
+  // to one poll plus one tick (~4 s) to show here; checked every tick anyway so
+  // the flip lands without any extra event plumbing.
+  if (statLineEl) statLineEl.hidden = !isHost();
+
+  if (p2pEl) p2pEl.textContent = `${ratio.toFixed(1)}%`;
+  if (peersEl) peersEl.textContent = String(peerIds.size);
+  if (downEl) downEl.textContent = `${mib(counters.downP2P)} MiB peer / ${mib(counters.downHTTP)} MiB server`;
+  if (upEl) upEl.textContent = `${mib(counters.upP2P)} MiB`;
+  if (segmentsEl) segmentsEl.textContent = `${counters.segmentsP2P} / ${total}`;
+  if (roleEl) {
+    roleEl.textContent =
+      role === "lead" ? `领播种子 · 缓冲 ${bufferTarget}s` : `跟随者 · 缓冲 ${bufferTarget}s`;
+  }
+  if (syncEl) {
+    if (!syncEnabled) syncEl.textContent = "已关闭（从 0 开始）";
+    else if (!hostRef) syncEl.textContent = "等待房主开始";
+    else {
+      const drift = Number(statusEl.dataset.syncDrift ?? 0);
+      syncEl.textContent =
+        `位置 ${video.currentTime.toFixed(0)}s · 漂移 ${drift >= 0 ? "+" : ""}${drift.toFixed(1)}s`;
+    }
+  }
+
+  // Mirrored onto the DOM because automation may run in an isolated JS world
+  // where the page's `window` properties are invisible but attributes are not.
+  statusEl.dataset.ready = "1";
+  statusEl.dataset.peers = String(peerIds.size);
+  statusEl.dataset.p2pRatio = ratio.toFixed(1);
+  statusEl.dataset.downP2P = String(counters.downP2P);
+  statusEl.dataset.downHTTP = String(counters.downHTTP);
+  statusEl.dataset.upP2P = String(counters.upP2P);
+  statusEl.dataset.role = role;
+  statusEl.dataset.bufferTarget = String(bufferTarget);
+}
+
+function mib(bytes) {
+  return (bytes / (1024 * 1024)).toFixed(1);
+}
+
+setInterval(() => {
+  render();
+  fetch("/api/report", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(snapshot()),
+    cache: "no-store",
+    keepalive: true,
+  }).catch(() => {});
+}, REPORT_INTERVAL_MS);
+
+setInterval(() => {
+  if (!userPaused && !ended) syncTick();
+}, SYNC_POLL_MS);
+
+if (roomId) {
+  await refreshRoom();
+  setInterval(refreshRoom, STATUS_POLL_MS);
+  // A room that is already live should start immediately; one that is not waits
+  // for the owner, and refreshRoom() loads the source when it goes live.
+  if (roomState?.status === "live") loadSource();
+} else {
+  await refreshRoom();
+  setInterval(refreshRoom, 30_000);
+  loadSource();
+}
+
+render();
+
+// Automation hook: the self-check reads this instead of scraping the DOM.
+window.__screening = {
+  stats: snapshot,
+  danmaku,
+  alignToHost,
+  ignoreLag,
+  isHost,
+  hostInfo: () => ({ peerId: hostPeerId, name: hostName, mode: syncMode }),
+  claimHost: (targetPeerId) =>
+    fetch(`/api/rooms/${roomId}/host`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-room-token": localStorage.getItem(`room-token-${roomId}`) ?? "" },
+      body: JSON.stringify({
+        peerId: targetPeerId ?? peerId,
+        selfPeerId: peerId,
+        ownerToken: localStorage.getItem(`room-token-${roomId}`) ?? "",
+      }),
+    }).then((response) => response.json()),
+  plyr,
+  peers: () => peerIds.size,
+  counters,
+  roomId,
+  swarmId: SWARM_ID,
+  signalingUrl: signalingUrl(),
+  stunUrl: stunUrl(),
+  loadSource,
+};

@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>放映会</title>
+    <link rel="stylesheet" href="/vendor/plyr.css" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <page-grid>
+      <site-nav>
+        <ul>
+          <li><a href="/">放映会</a></li>
+          <li><a href="/" id="navBack">房间</a></li>
+          <li><a href="/" id="navStatus">…</a></li>
+        </ul>
+      </site-nav>
+
+      <site-main>
+        <div class="row" style="justify-content: space-between; align-items: baseline">
+          <div>
+            <h1 id="roomTitle">…</h1>
+            <p class="entry-meta" id="roomSub"></p>
+          </div>
+          <button class="quiet" id="copyLink" type="button">复制链接</button>
+        </div>
+
+        <stage-frame>
+          <video id="video" playsinline autoplay muted></video>
+          <div id="veil">
+            <h3 id="veilTitle">等待房主开始</h3>
+            <p id="veilText">页面开着就行，房主开始放映时这里会自动从同一帧播放。</p>
+          </div>
+        </stage-frame>
+
+        <div class="danmaku-bar">
+          <input id="danmakuInput" type="text" maxlength="120" placeholder="发一条弹幕（Enter 发送）" aria-label="弹幕内容" />
+          <button id="danmakuSend" type="button">发送</button>
+          <span class="hint" id="danmakuStatus">连接中…</span>
+        </div>
+
+        <div class="sync-bar" id="syncBar" hidden>
+          <span id="syncBarText">与房主不同步</span>
+          <button id="syncBarAction" type="button">对齐到房主</button>
+          <button class="quiet" id="syncBarDismiss" type="button">留在这里</button>
+        </div>
+
+        <!-- Host-only diagnostics: ratios, drift and buffer targets are operating
+             numbers, not something a viewer should have to read. Hidden by default
+             so viewers never see them even before the first host check runs. -->
+        <dl class="stat-line" id="statLine" hidden>
+          <div><dt>P2P</dt><dd id="p2p">0.0%</dd></div>
+          <div><dt>观众</dt><dd id="peers">0</dd></div>
+          <div><dt>下行</dt><dd id="down">0 / 0 MiB</dd></div>
+          <div><dt>上行</dt><dd id="up">0.0 MiB</dd></div>
+          <div><dt>分片</dt><dd id="segments">0 / 0</dd></div>
+          <div><dt>同步</dt><dd id="sync">等待房主开始</dd></div>
+          <div><dt>角色</dt><dd id="role">—</dd></div>
+        </dl>
+
+        <p id="status" class="sr-only"></p>
+
+        <section class="danmaku-panel" id="danmakuPanel">
+          <h2>弹幕</h2>
+          <ul id="danmakuList"></ul>
+        </section>
+
+        <section class="people" id="people" hidden>
+          <h2>房间里</h2>
+          <ul id="peopleList"></ul>
+          <div class="row" id="hostControls" hidden>
+            <span class="hint">把房主转交给</span>
+            <select id="hostTransfer"></select>
+            <button id="hostTransferGo" type="button">转交</button>
+          </div>
+          <p class="hint" id="hostNote" hidden>你是房主：离开前请先把房主转交给别人。</p>
+        </section>
+
+        <section class="lock" id="lock" hidden>
+          <h2 id="lockTitle">私密房间</h2>
+          <p class="hint" id="lockHint">这个房间是私密的，输入房主给的密码才能进。</p>
+          <div class="field">
+            <input id="lockPassword" type="password" maxlength="32" placeholder="房间密码" aria-label="房间密码" />
+            <button id="lockSubmit" type="button">进入</button>
+          </div>
+          <p class="error" id="lockError" hidden></p>
+        </section>
+
+        <owner-panel id="owner" hidden>
+          <h2>房主</h2>
+
+          <div class="row">
+            <input type="file" id="file" accept="video/*,.mkv,.mp4,.webm,.mov,.avi,.ts,.m4v" />
+            <button id="upload" type="button">上传并处理</button>
+          </div>
+          <div class="progress"><i id="uploadBar"></i></div>
+          <p class="hint" id="uploadHint">支持 mkv / mp4 / mov，处理时压到 720p、约 2.5 Mbps。</p>
+
+          <div class="row">
+            <button id="start" type="button" disabled>开始放映</button>
+            <button id="startDelay" type="button" disabled>10 秒后开始</button>
+            <button id="end" type="button" disabled>结束放映</button>
+            <span class="spacer"></span>
+            <button class="danger" id="remove" type="button">删除房间</button>
+          </div>
+          <p class="hint" id="ownerHint"></p>
+          <p class="error" id="ownerError"></p>
+        </owner-panel>
+      </site-main>
+
+      <site-footer>
+        <div class="attribution">
+          <p id="footerMeta"></p>
+        </div>
+        <ul class="icon-links">
+          <li><button class="icon-button" id="reload" type="button" title="重新载入" aria-label="重新载入">↻</button></li>
+        </ul>
+      </site-footer>
+    </page-grid>
+
+    <script type="module" src="/player.js"></script>
+    <script type="module">
+      const roomId = location.pathname.match(/^\/r\/([a-z0-9]{4,32})\/?$/)?.[1];
+      const token = roomId ? localStorage.getItem(`room-token-${roomId}`) : null;
+
+      // Remember the visit so the portal's "最近看过" rail lists real rooms rather
+      // than a mock. Newest first, capped, and tolerant of a corrupt entry.
+      if (roomId) {
+        try {
+          const previous = JSON.parse(localStorage.getItem("recentRooms") ?? "[]");
+          const list = (Array.isArray(previous) ? previous : []).filter((entry) => entry?.id !== roomId);
+          list.unshift({ id: roomId, at: Date.now() });
+          localStorage.setItem("recentRooms", JSON.stringify(list.slice(0, 12)));
+        } catch {
+          /* quota or disabled storage: the rail just stays empty */
+        }
+      }
+
+      const titleEl = document.getElementById("roomTitle");
+      const navStatus = document.getElementById("navStatus");
+      const veil = document.getElementById("veil");
+      const veilTitle = document.getElementById("veilTitle");
+      const veilText = document.getElementById("veilText");
+      const ownerPanel = document.getElementById("owner");
+      const fileInput = document.getElementById("file");
+      const uploadButton = document.getElementById("upload");
+      const uploadBar = document.getElementById("uploadBar");
+      const uploadHint = document.getElementById("uploadHint");
+      const startButton = document.getElementById("start");
+      const startDelayButton = document.getElementById("startDelay");
+      const endButton = document.getElementById("end");
+      const removeButton = document.getElementById("remove");
+      const ownerHint = document.getElementById("ownerHint");
+      const ownerError = document.getElementById("ownerError");
+
+      const STATUS_TEXT = {
+        created: "等待上传",
+        queued: "排队中",
+        uploading: "上传中",
+        transcoding: "处理中",
+        ready: "待开播",
+        live: "放映中",
+        ended: "已结束",
+        failed: "处理失败",
+      };
+
+      let lastStatus = null;
+
+      function humanBytes(bytes) {
+        if (!bytes) return "0 MB";
+        if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
+        return `${(bytes / 1e6).toFixed(0)} MB`;
+      }
+
+      function setVeil(show, title, text) {
+        veil.hidden = !show;
+        if (title) veilTitle.textContent = title;
+        if (text) veilText.textContent = text;
+      }
+
+      function render(room) {
+        titleEl.textContent = room.title;
+        navStatus.textContent = STATUS_TEXT[room.status] ?? room.status;
+        document.title = `${room.title} · 放映会`;
+
+        if (room.status !== lastStatus) {
+          lastStatus = room.status;
+          if (room.status === "ready") {
+            setVeil(true, "片源已就绪", "房主点击「开始放映」后，这里会自动从同一帧开始播放。");
+          } else if (room.status === "live") {
+            setVeil(false);
+          } else if (room.status === "ended") {
+            setVeil(true, "放映结束", "谢谢观看。");
+          } else if (room.status === "failed") {
+            setVeil(true, "处理失败", room.error ?? "请让房主重新上传。");
+          } else {
+            setVeil(true, "等待房主准备片源", "上传与处理期间，这个页面开着就行。");
+          }
+        }
+
+        if (!token) {
+          ownerPanel.hidden = true;
+          return;
+        }
+        ownerPanel.hidden = false;
+
+        const busy = ["uploading", "transcoding", "queued"].includes(room.status);
+        uploadButton.disabled = busy;
+        startButton.disabled = room.status !== "ready";
+        startDelayButton.disabled = room.status !== "ready";
+        endButton.disabled = room.status !== "live";
+        removeButton.disabled = busy;
+
+        if (room.status === "queued") {
+          const position = room.progress?.position ?? 1;
+          uploadBar.style.width = "0%";
+          uploadHint.textContent = `排队中，前面还有 ${Math.max(0, position - 1)} 个任务。`;
+        } else if (room.status === "transcoding" && room.progress) {
+          const percent = room.progress.percent * 100;
+          uploadBar.style.width = `${percent}%`;
+          uploadHint.textContent = `处理中 ${percent.toFixed(0)}%${room.progress.speed ? ` · ${room.progress.speed}` : ""}`;
+        } else if (room.status === "ready" && room.sourceName) {
+          uploadBar.style.width = "100%";
+          uploadHint.textContent =
+            `${room.sourceName} · ${humanBytes(room.sourceBytes)} · ` +
+            `${room.segments ?? 0} 个分片 · ${Math.round(room.durationSec ?? 0)} 秒`;
+        }
+
+        ownerError.textContent = room.error ?? "";
+      }
+
+      async function refreshRoom() {
+        if (!roomId) return;
+        try {
+          const response = await fetch(`/api/rooms/${roomId}`, {
+            cache: "no-store",
+            // The owner always gets through: the token is checked server-side, so
+            // a private room still opens for whoever holds it.
+            headers: token ? { "x-room-token": token } : {},
+          });
+          if (response.status === 403) {
+            const payload = await response.json().catch(() => ({}));
+            if (payload.locked) {
+              showLock(payload.room ?? {});
+              return;
+            }
+          }
+          if (!response.ok) {
+            setVeil(true, "房间不存在", "可能已被房主删除。");
+            return;
+          }
+          const payload = await response.json();
+          hideLock();
+          render(payload.room);
+          renderPeople(payload.room);
+        } catch {
+          /* transient; next poll retries */
+        }
+      }
+
+      /* ------------------------------------------------------- private rooms */
+
+      const lockEl = document.getElementById("lock");
+      const lockTitle = document.getElementById("lockTitle");
+      const lockPassword = document.getElementById("lockPassword");
+      const lockSubmit = document.getElementById("lockSubmit");
+      const lockError = document.getElementById("lockError");
+
+      function showLock(room) {
+        // The gate replaces the screening surface entirely, so nothing about the
+        // film — not the player, not the danmaku stream — renders before access.
+        document.body.classList.add("locked");
+        lockEl.hidden = false;
+        lockTitle.textContent = room.title || "私密房间";
+        lockError.hidden = true;
+      }
+
+      function hideLock() {
+        document.body.classList.remove("locked");
+        lockEl.hidden = true;
+      }
+
+      async function submitUnlock() {
+        const password = lockPassword.value;
+        if (!password) return;
+        lockSubmit.disabled = true;
+        try {
+          const response = await fetch(`/api/rooms/${roomId}/unlock`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ password }),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            lockError.textContent = payload.error ?? "密码不对";
+            lockError.hidden = false;
+            lockPassword.select();
+            return;
+          }
+          // The cookie is what the player's segment requests carry, so a reload is
+          // both the simplest and the most honest way to restart with access.
+          location.reload();
+        } catch {
+          lockError.textContent = "连不上服务器";
+          lockError.hidden = false;
+        } finally {
+          lockSubmit.disabled = false;
+        }
+      }
+
+      lockSubmit.addEventListener("click", submitUnlock);
+      lockPassword.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        submitUnlock();
+      });
+
+      document.addEventListener("room-state", (event) => render(event.detail));
+      document.addEventListener("screening-ended", () => setVeil(true, "放映结束", "谢谢观看。"));
+
+      /* -------------------------------------------------- host & sync UI */
+
+      const syncBar = document.getElementById("syncBar");
+      const syncBarText = document.getElementById("syncBarText");
+      const syncBarAction = document.getElementById("syncBarAction");
+      const syncBarDismiss = document.getElementById("syncBarDismiss");
+      const peopleEl = document.getElementById("people");
+      const peopleList = document.getElementById("peopleList");
+      const hostControls = document.getElementById("hostControls");
+      const hostTransfer = document.getElementById("hostTransfer");
+      const hostTransferGo = document.getElementById("hostTransferGo");
+      const hostNote = document.getElementById("hostNote");
+
+      const screening = () => window.__screening;
+      let latestRoom = null;
+
+      // Two different reasons to show the bar: the viewer scrubbed away, or a
+      // stall left them behind. The first offers no "dismiss", because dismissing
+      // is what free mode already is.
+      document.addEventListener("sync-mode", (event) => {
+        const mode = event.detail?.mode;
+        if (mode === "free") {
+          syncBar.hidden = false;
+          syncBarText.textContent = "你已离开房主的进度";
+          syncBarDismiss.hidden = true;
+        } else {
+          syncBar.hidden = true;
+        }
+      });
+
+      document.addEventListener("sync-lag-prompt", (event) => {
+        const lag = event.detail?.lag ?? 0;
+        syncBar.hidden = false;
+        syncBarText.textContent = `落后房主 ${lag.toFixed(0)} 秒`;
+        syncBarDismiss.hidden = false;
+      });
+
+      syncBarAction.addEventListener("click", () => {
+        screening()?.alignToHost();
+        syncBar.hidden = true;
+      });
+
+      syncBarDismiss.addEventListener("click", () => {
+        screening()?.ignoreLag();
+        syncBar.hidden = true;
+      });
+
+      // Auto-claim: whoever holds the token becomes host when the seat is empty.
+      // Doing this on load keeps "the person who opened the room is the host"
+      // true without an extra click, and re-claims if a previous host vanished.
+      let claiming = false;
+      // A failed claim must not be retried on the next poll: the server's 409
+      // ("that viewer is not in the room right now") is stable for a while, and
+      // an un-awaited refreshRoom() after it re-entered renderPeople → ensureHost
+      // → POST at HTTP speed. Observed live: 34 requests inside one second.
+      let claimCooldownUntil = 0;
+      let claimBackoffMs = 1500;
+      let myPeerId = null;
+      async function ensureHost(room) {
+        // Two recovery paths, deliberately different:
+        //  - a fresh room (never assigned) is claimed by its owner only;
+        //  - a leaderless room (host timed out) may be claimed by anyone still
+        //    watching, because otherwise the whole room is stuck behind a frozen
+        //    hostRef with no way out.
+        if (claiming || Date.now() < claimCooldownUntil) return;
+        const unassigned = !room.hostPeerId;
+        const leaderless = Boolean(room.hostPeerId) && room.hostAway;
+        if (!unassigned && !leaderless) return;
+        if (unassigned && !token) return;
+        myPeerId = window.__screening?.stats().peerId ?? myPeerId;
+        if (leaderless && myPeerId === room.hostPeerId) return;
+        const me = window.__screening;
+        if (!me) return;
+        myPeerId = me.stats().peerId;
+        claiming = true;
+        try {
+          const response = await fetch(`/api/rooms/${roomId}/host`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-room-token": token },
+            body: JSON.stringify({ peerId: myPeerId, selfPeerId: myPeerId, ownerToken: token }),
+          });
+          // Only a successful claim changes what the next poll would see, so only
+          // that one is worth an immediate refresh.
+          if (response.ok) {
+            claimBackoffMs = 1500;
+            refreshRoom();
+          } else {
+            // Retry soon enough to catch a transient "not live yet", then widen:
+            // 1.5s → 3s → 6s → 10s. A flat long delay left the room leaderless
+            // for ten seconds; no delay at all is the storm we just fixed.
+            claimCooldownUntil = Date.now() + claimBackoffMs;
+            claimBackoffMs = Math.min(claimBackoffMs * 2, 10_000);
+          }
+        } catch {
+          // Network hiccup: back off the same way rather than spinning.
+          claimCooldownUntil = Date.now() + claimBackoffMs;
+          claimBackoffMs = Math.min(claimBackoffMs * 2, 10_000);
+        } finally {
+          claiming = false;
+        }
+      }
+
+      function renderPeople(room) {
+        latestRoom = room;
+        const people = room.participants ?? [];
+        const hostAway = room.hostAway;
+
+        peopleEl.hidden = people.length === 0;
+        peopleList.innerHTML = people
+          .map((person) => {
+            const label = person.name || `观众 ${person.peerId.slice(-4)}`;
+            const tag = person.isHost ? '<em class="tag">房主</em>' : "";
+            return `<li${person.isHost ? ' class="is-host"' : ""}><span>${escapeHtml(label)}</span>${tag}</li>`;
+          })
+          .join("");
+
+        if (hostAway) {
+          peopleList.insertAdjacentHTML(
+            "afterbegin",
+            '<li class="host-away"><span>房主已离开</span><em class="tag warn">待接管</em></li>',
+          );
+        }
+
+        void ensureHost(room);
+
+        const me = screening();
+        const iAmHost = me?.isHost?.() ?? false;
+        const owned = Boolean(token);
+
+        // Only the token holder can hand the room over; anyone can take an empty
+        // seat, which is what keeps a screening alive after a crashed host.
+        hostControls.hidden = !owned || people.length === 0;
+        hostNote.hidden = !iAmHost || people.length < 2;
+        hostTransfer.innerHTML = people
+          .filter((person) => !person.isHost)
+          .map((person) => `<option value="${person.peerId}">${escapeHtml(person.name || person.peerId.slice(-4))}</option>`)
+          .join("");
+        hostTransferGo.disabled = hostTransfer.options.length === 0;
+      }
+
+      hostTransferGo.addEventListener("click", async () => {
+        const target = hostTransfer.value;
+        if (!target) return;
+        await fetch(`/api/rooms/${roomId}/host`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-room-token": token },
+          body: JSON.stringify({ peerId: target }),
+        }).catch(() => {});
+        refreshRoom();
+      });
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (c) =>
+          ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+        );
+      }
+
+      // Leaving as host with an audience: ask before the tab closes. The browser
+      // shows its own generic wording, which is enough of a speed bump to prompt
+      // the handover the room needs.
+      window.addEventListener("beforeunload", (event) => {
+        if (!token) return;
+        if (!screening()?.isHost?.()) return;
+        if ((latestRoom?.participants ?? []).length < 2) return;
+        event.preventDefault();
+        event.returnValue = "";
+      });
+
+      /* ---------------------------------------------------------- danmaku */
+
+      const danmakuInput = document.getElementById("danmakuInput");
+      const danmakuSend = document.getElementById("danmakuSend");
+      const danmakuStatus = document.getElementById("danmakuStatus");
+
+      document.addEventListener("danmaku-status", (event) => {
+        const connected = event.detail?.connected;
+        danmakuStatus.textContent = connected ? "" : "弹幕已断开，重连中…";
+        // Only the button is disabled. Disabling a focused input blurs it and
+        // drops the composition in progress, so a WiFi flap — and the 4 s
+        // reconnect loop repeats it — would eat the pinyin being typed. The
+        // text is kept and `send()` refuses while the socket is down, so the
+        // composer stays usable and the status line carries the state.
+        danmakuSend.disabled = !connected;
+      });
+
+      function sendDanmaku() {
+        const api = window.__screening?.danmaku;
+        if (!api) return;
+        if (api.send(danmakuInput.value)) danmakuInput.value = "";
+        danmakuInput.focus();
+      }
+
+      danmakuSend.addEventListener("click", sendDanmaku);
+
+      // Enter belongs to the input method while a composition is open: it picks a
+      // candidate or commits raw pinyin. Taking it — and preventDefault(), which
+      // aborts the composition — sends the pinyin as a danmaku and drops what was
+      // being typed, which reads as the IME stuttering every few keys.
+      let composing = false;
+      danmakuInput.addEventListener("compositionstart", () => {
+        composing = true;
+      });
+      danmakuInput.addEventListener("compositionend", () => {
+        // Chromium reports the committing Enter before compositionend, but other
+        // engines report it after. Let the rest of this key event through, then
+        // release the flag.
+        setTimeout(() => {
+          composing = false;
+        }, 0);
+      });
+      danmakuInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        if (composing || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        sendDanmaku();
+      });
+
+      refreshRoom();
+      setInterval(refreshRoom, 3000);
+
+      document.getElementById("copyLink").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(location.href);
+        } catch {
+          prompt("复制这个链接发给观众：", location.href);
+        }
+      });
+
+      document.getElementById("reload").addEventListener("click", () => location.reload());
+
+      /* ---------------------------------------------------------- owner ops */
+
+      function ownerRequest(path, options = {}) {
+        return fetch(`/api/rooms/${roomId}${path}`, {
+          ...options,
+          headers: { ...(options.headers ?? {}), "x-room-token": token },
+        });
+      }
+
+      uploadButton.addEventListener("click", () => {
+        const file = fileInput.files?.[0];
+        if (!file) {
+          ownerError.textContent = "先选一个视频文件。";
+          return;
+        }
+        ownerError.textContent = "";
+        uploadButton.disabled = true;
+        uploadHint.textContent = "上传中 0%";
+
+        // XHR rather than fetch: upload progress is the only feedback during a
+        // multi-minute transfer, and fetch still cannot report it.
+        const request = new XMLHttpRequest();
+        request.open("PUT", `/api/rooms/${roomId}/source`);
+        request.setRequestHeader("x-room-token", token);
+        request.setRequestHeader("x-filename", encodeURIComponent(file.name));
+        request.setRequestHeader("content-type", "application/octet-stream");
+
+        request.upload.addEventListener("progress", (event) => {
+          if (!event.lengthComputable) return;
+          const percent = (event.loaded / event.total) * 100;
+          uploadBar.style.width = `${percent}%`;
+          uploadHint.textContent =
+            `上传中 ${percent.toFixed(0)}% · ${humanBytes(event.loaded)} / ${humanBytes(event.total)}`;
+        });
+
+        request.addEventListener("load", () => {
+          if (request.status >= 200 && request.status < 300) {
+            uploadHint.textContent = "上传完成，开始处理…";
+            refreshRoom();
+            return;
+          }
+          uploadButton.disabled = false;
+          let message = request.responseText;
+          try {
+            message = JSON.parse(request.responseText).error ?? message;
+          } catch {
+            /* plain text body */
+          }
+          ownerError.textContent = `上传失败：${message}`;
+        });
+
+        request.addEventListener("error", () => {
+          uploadButton.disabled = false;
+          ownerError.textContent = "上传中断（网络断开？）。";
+        });
+
+        request.send(file);
+      });
+
+      async function start(delaySec) {
+        startButton.disabled = true;
+        startDelayButton.disabled = true;
+        try {
+          const response = await ownerRequest("/start", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ delaySec }),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error ?? response.statusText);
+          }
+          ownerHint.textContent = delaySec
+            ? `${delaySec} 秒后开始，观众会自动对齐。`
+            : "已开始，观众会自动对齐到同一帧。";
+        } catch (error) {
+          ownerError.textContent = `开始失败：${error.message}`;
+        } finally {
+          refreshRoom();
+        }
+      }
+
+      startButton.addEventListener("click", () => start(0));
+      startDelayButton.addEventListener("click", () => start(10));
+
+      endButton.addEventListener("click", async () => {
+        await ownerRequest("/end", { method: "POST" }).catch(() => {});
+        refreshRoom();
+      });
+
+      removeButton.addEventListener("click", async () => {
+        if (!confirm("删除这个房间？片源和转码结果都会被删掉。")) return;
+        await ownerRequest("", { method: "DELETE" }).catch(() => {});
+        localStorage.removeItem(`room-token-${roomId}`);
+        location.href = "/";
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1410 @@
+/* Portal skin: a dark content aggregator, laid out like a live-streaming
+ * front page.
+ *
+ * Everything here is scoped to `body.portal`, so the room page keeps the
+ * editorial styling from app.css. app.css still supplies the reset, the font
+ * faces and the type scale; this file replaces the palette, the page frame and
+ * every component the portal uses.
+ *
+ * Geometry (measured at a 1440 viewport, 24px gutters):
+ *   header      60px fixed, blurs the content behind it
+ *   sub-nav     capsule row, 32px tall, wraps horizontally
+ *   banner      200px, rounded 12px, dots bottom-right
+ *   main        55 / 45 split: focus stage left, 2-col cards + follow rail right
+ *   feed        auto-fill cards, 16:9 covers, infinite downward
+ */
+
+body.portal {
+  --p-bg: #18191b;
+  --p-surface: #1f2023;
+  --p-surface-2: #26282c;
+  --p-surface-3: #2e3034;
+  --p-line: rgba(255, 255, 255, 0.07);
+  --p-line-strong: rgba(255, 255, 255, 0.14);
+  --p-text: #e6e7ea;
+  --p-text-dim: #c9ccd0;
+  --p-muted: #9499a0;
+  --p-pink: #fb7299;
+  --p-pink-strong: #ff85a9;
+  --p-max: 1440px;
+
+  /* app.css still supplies element-level defaults. Its `button`/`a` rules read
+     these three tokens, so they are remapped here — otherwise hovering a chip
+     paints it with the room page's warm-paper border. */
+  --foreground: var(--p-text);
+  --muted-foreground: var(--p-muted);
+  --border: var(--p-line);
+
+  color-scheme: dark;
+  margin: 0;
+  padding-top: 60px;
+  background: var(--p-bg);
+  color: var(--p-text);
+  font-family: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.portal a {
+  color: inherit;
+  text-decoration: none;
+}
+
+body.portal code {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  color: var(--p-text-dim);
+}
+
+body.portal button {
+  font: inherit;
+  cursor: pointer;
+}
+
+body.portal :focus-visible {
+  outline: 2px solid var(--p-pink);
+  outline-offset: 2px;
+}
+
+.p-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* ----------------------------------------------------------------- header */
+
+.p-header {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 60px;
+  z-index: 50;
+  background: rgba(24, 25, 27, 0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--p-line);
+}
+
+.p-header-inner {
+  max-width: var(--p-max);
+  height: 100%;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.p-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--p-pink);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  flex: none;
+}
+
+.p-logo-mark {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--p-pink);
+}
+
+.p-logo-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0;
+  height: 0;
+  border-left: 7px solid #fff;
+  border-top: 4.5px solid transparent;
+  border-bottom: 4.5px solid transparent;
+  transform: translateX(1px);
+}
+
+.p-nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex: none;
+}
+
+.p-nav a,
+.p-nav button {
+  font-size: 14px;
+  color: var(--p-text-dim);
+  background: none;
+  border: 0;
+  padding: 0;
+  line-height: 60px;
+  transition: color 0.15s;
+}
+
+.p-nav a:hover,
+.p-nav button:hover {
+  color: var(--p-text);
+}
+
+.p-nav a[aria-current="page"] {
+  color: var(--p-pink);
+  font-weight: 600;
+}
+
+.p-search {
+  flex: 1 1 auto;
+  max-width: 360px;
+  margin: 0 auto;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--p-surface-2);
+  border: 1px solid transparent;
+  color: var(--p-muted);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.p-search:focus-within {
+  background: var(--p-surface-3);
+  border-color: var(--p-line-strong);
+}
+
+.p-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: none;
+  color: var(--p-text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.p-search input::placeholder {
+  color: var(--p-muted);
+}
+
+.p-search input::-webkit-search-cancel-button {
+  filter: invert(0.6);
+}
+
+.p-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+}
+
+.p-capacity {
+  font-size: 12px;
+  color: var(--p-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.p-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--p-surface-3);
+  border: 1px solid var(--p-line-strong);
+  color: var(--p-text);
+  font-size: 13px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.p-avatar:hover:not(:disabled) {
+  border-color: var(--p-pink);
+}
+
+.p-primary {
+  height: 34px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--p-pink);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.p-primary:hover:not(:disabled) {
+  background: var(--p-pink-strong);
+}
+
+.p-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.p-quiet {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--p-line-strong);
+  background: none;
+  color: var(--p-text-dim);
+  font-size: 13px;
+}
+
+.p-quiet:hover:not(:disabled) {
+  border-color: var(--p-pink);
+  color: var(--p-text);
+}
+
+/* ----------------------------------------------------------------- sub-nav */
+
+.p-subnav {
+  max-width: var(--p-max);
+  margin: 0 auto;
+  padding: 16px 24px 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.p-subnav::-webkit-scrollbar {
+  display: none;
+}
+
+.p-chip {
+  flex: none;
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--p-surface);
+  color: var(--p-text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+/* Restated with `:not(:disabled)` so app.css's global `button:hover:not(:disabled)`
+   border-color does not win over the capsule styling. */
+.p-chip:not(.is-active):hover:not(:disabled) {
+  color: var(--p-text);
+  background: var(--p-surface-2);
+  border-color: transparent;
+}
+
+.p-chip.is-active {
+  color: var(--p-pink);
+  background: rgba(251, 114, 153, 0.14);
+  border-color: rgba(251, 114, 153, 0.45);
+}
+
+/* -------------------------------------------------------------------- main */
+
+.p-main {
+  max-width: var(--p-max);
+  margin: 20px auto 0;
+  padding: 0 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 55fr) minmax(0, 45fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.p-focus {
+  display: block;
+}
+
+.p-focus-stage {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #101113;
+}
+
+.p-cover-img,
+.p-cover-blank {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.p-cover-blank {
+  background:
+    radial-gradient(90% 90% at 20% 10%, rgba(251, 114, 153, 0.18), transparent 60%),
+    linear-gradient(135deg, #232529, #17181a);
+}
+
+.p-focus-top {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.p-focus-clock {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--p-text-dim);
+  backdrop-filter: blur(4px);
+}
+
+.p-focus-play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: #fff;
+  backdrop-filter: blur(4px);
+  transition: background 0.18s, transform 0.18s;
+}
+
+.p-focus-play svg {
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+}
+
+.p-focus:hover .p-focus-play {
+  background: var(--p-pink);
+  transform: scale(1.06);
+}
+
+.p-focus-bottom {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 40px 16px 14px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
+}
+
+.p-focus-bottom h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.p-focus-bottom p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.p-focus-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 2px 0;
+  font-size: 12px;
+  color: var(--p-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.p-focus-cta {
+  margin-left: auto;
+  color: var(--p-pink);
+}
+
+.p-empty-focus {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  border: 1px dashed var(--p-line-strong);
+  border-radius: 12px;
+  color: var(--p-muted);
+  font-size: 13px;
+}
+
+.p-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.p-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.p-section-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.p-more {
+  font-size: 12px;
+  color: var(--p-muted);
+}
+
+.p-more:hover {
+  color: var(--p-pink);
+}
+
+.p-count {
+  font-size: 12px;
+  color: var(--p-muted);
+}
+
+/* --------------------------------------------------------- follow avatars */
+
+.p-follow {
+  background: var(--p-surface);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.p-avatars {
+  display: flex;
+  gap: 14px;
+  margin: 0;
+  padding: 0 0 2px;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.p-avatars::-webkit-scrollbar {
+  display: none;
+}
+
+.p-avatars a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 64px;
+}
+
+.p-avatar-face {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--p-surface-3);
+  border: 2px solid transparent;
+  color: var(--p-text-dim);
+  font-size: 16px;
+  transition: border-color 0.15s;
+}
+
+.p-avatars .is-live .p-avatar-face {
+  border-color: var(--p-pink);
+}
+
+.p-avatar-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.p-avatar-name {
+  max-width: 64px;
+  font-size: 11px;
+  color: var(--p-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------------- cards */
+
+.p-side-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 14px;
+}
+
+.p-card {
+  display: block;
+  min-width: 0;
+}
+
+.p-card-cover {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #101113;
+}
+
+.p-card-cover .p-cover-img {
+  transition: transform 0.35s ease;
+}
+
+.p-card:hover .p-cover-img {
+  transform: scale(1.04);
+}
+
+.p-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  backdrop-filter: blur(4px);
+}
+
+.p-badge[data-tone="live"] {
+  background: var(--p-pink);
+}
+
+.p-badge[data-tone="busy"] {
+  background: rgba(251, 114, 153, 0.28);
+  color: #ffd9e4;
+}
+
+.p-badge[data-tone="failed"] {
+  background: rgba(255, 90, 90, 0.85);
+}
+
+.p-viewers {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+
+.p-viewers-time {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.p-cat {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.p-card-title {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--p-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.p-card:hover .p-card-title {
+  color: var(--p-pink);
+}
+
+.p-card-up {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--p-muted);
+}
+
+/* -------------------------------------------------------------------- feed */
+
+.p-feed {
+  max-width: var(--p-max);
+  margin: 28px auto 0;
+  padding: 0 24px;
+}
+
+.p-feed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 20px 16px;
+}
+
+.p-sentinel {
+  height: 1px;
+}
+
+.p-feed-end {
+  margin: 0;
+  padding: 24px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--p-muted);
+}
+
+/* ------------------------------------------------------------------ footer */
+
+.p-footer {
+  max-width: var(--p-max);
+  margin: 0 auto;
+  padding: 18px 24px 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--p-muted);
+  border-top: 1px solid var(--p-line);
+}
+
+/* ----------------------------------------------------------------- dialogs */
+
+.p-dialog {
+  width: calc(100% - 32px);
+  max-width: 420px;
+  padding: 0;
+  border: 1px solid var(--p-line-strong);
+  border-radius: 14px;
+  background: var(--p-surface);
+  color: var(--p-text);
+}
+
+.p-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.p-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px;
+  margin: 0;
+}
+
+.p-dialog-body h2 {
+  margin: 0 0 2px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.p-dialog-lede {
+  margin: -4px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--p-muted);
+}
+
+.p-dialog-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--p-muted);
+}
+
+.p-dialog-body input {
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--p-line-strong);
+  background: var(--p-surface-2);
+  color: var(--p-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.p-dialog-body input:focus {
+  outline: none;
+  border-color: var(--p-pink);
+}
+
+.p-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.p-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--p-muted);
+}
+
+/* -------------------------------------------------------------- responsive */
+
+@media (max-width: 1120px) {
+  .p-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .p-side-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .p-nav {
+    display: none;
+  }
+
+  .p-capacity {
+    display: none;
+  }
+
+}
+
+@media (max-width: 720px) {
+  .p-header-inner {
+    gap: 12px;
+    padding: 0 16px;
+  }
+
+  .p-search {
+    max-width: none;
+  }
+
+  .p-subnav,
+  .p-main,
+  .p-feed,
+  .p-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .p-feed-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 12px;
+  }
+}
+
+/* --------------------------------------------------- inline name editor */
+
+/* The avatar opens a field inside the header rather than a native prompt(). It
+   grows out of the avatar's left edge, so the primary button never jumps. */
+.p-nameform {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: width 0.22s ease, opacity 0.16s ease;
+}
+
+.p-nameform[hidden] {
+  display: none;
+}
+
+.p-nameform.is-open {
+  width: 168px;
+  opacity: 1;
+}
+
+.p-nameform input {
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--p-pink);
+  background: var(--p-surface-2);
+  color: var(--p-text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.p-nameform input::placeholder {
+  color: var(--p-muted);
+}
+
+/* ------------------------------------------------------ search feedback */
+
+.p-search-msg {
+  max-width: var(--p-max);
+  margin: 8px auto 0;
+  padding: 0 24px;
+  font-size: 12px;
+  color: var(--p-muted);
+}
+
+.p-search-msg[hidden] {
+  display: none;
+}
+
+/* ------------------------------------------------------- visibility picker */
+
+.p-visibility {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.p-visibility legend {
+  padding: 0 0 8px;
+  font-size: 13px;
+  color: var(--p-muted);
+}
+
+.p-radio {
+  flex: 1 1 8rem;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--p-line-strong);
+  border-radius: 10px;
+  background: var(--p-surface-2);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.p-radio:has(input:checked) {
+  border-color: var(--p-pink);
+  background: rgba(251, 114, 153, 0.12);
+}
+
+.p-radio input {
+  width: auto;
+  height: auto;
+  margin: 2px 0 0;
+  accent-color: var(--p-pink);
+}
+
+.p-radio span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.p-radio b {
+  font-weight: 600;
+  color: var(--p-text);
+}
+
+.p-radio em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--p-muted);
+}
+
+/* ------------------------------------------------------- 使用指南动画浮层 */
+
+/* First-visit explainer. Deliberately not a banner on the page: the portal is
+   about the rooms, so the "how this works" story is a modal that appears once
+   and can be reopened from the nav.
+ *
+ * The three scenes are pure CSS motion graphics. Their timelines are 5.4s long
+ * to match the JS advance interval, and only play while `.is-active` is on the
+ * scene — re-adding that class restarts the animation from frame zero. */
+
+.p-onboard {
+  width: calc(100% - 32px);
+  max-width: 620px;
+  padding: 0;
+  border: 1px solid var(--p-line-strong);
+  border-radius: 16px;
+  background: var(--p-surface);
+  color: var(--p-text);
+  overflow: hidden;
+}
+
+.p-onboard::backdrop {
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(3px);
+}
+
+.p-onboard-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.p-onboard-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--p-text-dim);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.p-onboard-close:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.p-onboard-copy h2 {
+  margin: 0 0 6px;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.p-onboard-copy p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--p-text-dim);
+}
+
+.p-onboard-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.p-onboard-dots {
+  display: flex;
+  gap: 6px;
+  margin-right: auto;
+}
+
+.p-onboard-dots button {
+  width: 16px;
+  height: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.28);
+  transition: width 0.2s, background 0.2s;
+}
+
+.p-onboard-dots button.is-active {
+  width: 24px;
+  background: var(--p-pink);
+}
+
+/* ------------------------------------------------------------------ stage */
+
+.mg-stage {
+  position: relative;
+  height: 220px;
+  border-radius: 12px;
+  overflow: hidden;
+  background:
+    radial-gradient(70% 90% at 50% 0%, rgba(251, 114, 153, 0.14), transparent 62%),
+    linear-gradient(180deg, #17181b, #101113);
+}
+
+.mg-scene {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mg-scene.is-active {
+  opacity: 1;
+}
+
+/* --- scene 1: upload → transcode → ready --- */
+
+.mg-file {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 104px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--p-line-strong);
+  background: var(--p-surface-2);
+  font-size: 11px;
+  color: var(--p-text-dim);
+}
+
+.mg-file em {
+  font-style: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mg-file-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.mg-rail {
+  position: relative;
+  width: 48px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.mg-rail i {
+  position: absolute;
+  top: -2px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--p-pink);
+  opacity: 0;
+}
+
+.mg-box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 132px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--p-line-strong);
+  background: var(--p-surface-2);
+}
+
+.mg-box-title {
+  font-size: 12px;
+  color: var(--p-text-dim);
+}
+
+.mg-progress {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.mg-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--p-pink);
+}
+
+.mg-badge {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: rgba(251, 114, 153, 0.2);
+  color: #ffd9e4;
+  opacity: 0;
+}
+
+.mg-scene.is-active .mg-file {
+  animation: mg-file-in 5.4s ease-in-out both;
+}
+
+.mg-scene.is-active .mg-rail i {
+  animation: mg-dot-run 5.4s ease-in-out both;
+}
+
+.mg-scene.is-active .mg-progress i {
+  animation: mg-fill 5.4s ease-out both;
+}
+
+.mg-scene.is-active .mg-badge {
+  animation: mg-pop 5.4s ease-out both;
+}
+
+@keyframes mg-file-in {
+  0% { opacity: 0; transform: translateX(-26px); }
+  12% { opacity: 1; transform: translateX(0); }
+  56% { opacity: 1; transform: translateX(14px) scale(0.95); }
+  68%, 100% { opacity: 0; transform: translateX(20px) scale(0.9); }
+}
+
+@keyframes mg-dot-run {
+  0% { left: 0; opacity: 0; }
+  12% { opacity: 1; }
+  56% { left: calc(100% - 6px); opacity: 1; }
+  68%, 100% { left: calc(100% - 6px); opacity: 0; }
+}
+
+@keyframes mg-fill {
+  0%, 18% { width: 0; }
+  62% { width: 100%; }
+  100% { width: 100%; }
+}
+
+@keyframes mg-pop {
+  0%, 60% { opacity: 0; transform: scale(0.6); }
+  70% { opacity: 1; transform: scale(1.08); }
+  78%, 100% { opacity: 1; transform: scale(1); }
+}
+
+/* --- scene 2: danmaku over the picture --- */
+
+.mg-scene[data-scene="1"] {
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mg-screen {
+  position: relative;
+  width: 300px;
+  height: 118px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #22242a, #141518);
+  border: 1px solid var(--p-line-strong);
+}
+
+.mg-dm {
+  position: absolute;
+  top: calc(15px + var(--row) * 30px);
+  right: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(110%);
+}
+
+.mg-scene.is-active .mg-dm {
+  animation: mg-dm-run 5.4s linear var(--delay) both;
+}
+
+.mg-input {
+  display: flex;
+  align-items: center;
+  width: 220px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--p-line-strong);
+  background: var(--p-surface-2);
+  color: var(--p-muted);
+  font-size: 11px;
+  overflow: hidden;
+}
+
+/* Typewriter, not a fade: it reads as someone actually sending the comment. */
+.mg-input span {
+  display: block;
+  width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mg-scene.is-active .mg-input span {
+  animation: mg-type 5.4s steps(7, end) both;
+}
+
+@keyframes mg-dm-run {
+  0% { transform: translateX(0); opacity: 0; }
+  5% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateX(-380px); opacity: 0; }
+}
+
+@keyframes mg-type {
+  0%, 8% { width: 0; }
+  52%, 100% { width: 7em; }
+}
+
+/* --- scene 3: the host decides, you catch up on demand --- */
+
+.mg-scene[data-scene="2"] {
+  flex-direction: column;
+  gap: 22px;
+}
+
+.mg-timeline {
+  position: relative;
+  width: min(78%, 360px);
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.mg-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+}
+
+.mg-pin {
+  position: absolute;
+  top: -4px;
+  left: 22%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--p-muted);
+}
+
+.mg-pin b {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--p-muted);
+}
+
+.mg-pin-host {
+  background: var(--p-pink);
+  box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.2);
+}
+
+.mg-pin-host b {
+  color: var(--p-pink);
+}
+
+.mg-toast {
+  position: absolute;
+  top: 34px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--p-line-strong);
+  background: var(--p-surface-2);
+  font-size: 11px;
+  color: var(--p-text-dim);
+  opacity: 0;
+}
+
+.mg-align {
+  position: relative;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 114, 153, 0.5);
+  background: rgba(251, 114, 153, 0.14);
+  color: var(--p-pink);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.mg-scene.is-active .mg-pin-host {
+  animation: mg-host-move 5.4s ease-in-out both;
+}
+
+.mg-scene.is-active .mg-pin-you {
+  animation: mg-you-move 5.4s ease-in-out both;
+}
+
+.mg-scene.is-active .mg-toast {
+  animation: mg-toast-in 5.4s ease-out both;
+}
+
+.mg-scene.is-active .mg-align {
+  animation: mg-press 5.4s ease-in-out both;
+}
+
+@keyframes mg-host-move {
+  0%, 22% { left: 22%; }
+  34%, 100% { left: 66%; }
+}
+
+@keyframes mg-you-move {
+  0%, 22% { left: 22%; }
+  38% { left: 10%; }
+  58% { left: 12%; }
+  76%, 100% { left: 66%; }
+}
+
+@keyframes mg-toast-in {
+  0%, 34% { opacity: 0; transform: translateY(6px); }
+  44%, 70% { opacity: 1; transform: translateY(0); }
+  82%, 100% { opacity: 0; transform: translateY(-4px); }
+}
+
+@keyframes mg-press {
+  0%, 72% { transform: scale(1); background: rgba(251, 114, 153, 0.14); }
+  78% { transform: scale(0.94); background: rgba(251, 114, 153, 0.3); }
+  86%, 100% { transform: scale(1); background: rgba(251, 114, 153, 0.14); }
+}
+
+@media (max-width: 560px) {
+  .mg-stage {
+    height: 180px;
+  }
+
+  .mg-screen {
+    width: 176px;
+    height: 96px;
+  }
+
+  .p-onboard-copy h2 {
+    font-size: 17px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-scene.is-active .mg-file,
+  .mg-scene.is-active .mg-rail i,
+  .mg-scene.is-active .mg-progress i,
+  .mg-scene.is-active .mg-badge,
+  .mg-scene.is-active .mg-dm,
+  .mg-scene.is-active .mg-input span,
+  .mg-scene.is-active .mg-pin-host,
+  .mg-scene.is-active .mg-pin-you,
+  .mg-scene.is-active .mg-toast,
+  .mg-scene.is-active .mg-align {
+    animation: none;
+  }
+
+  /* These are only ever made visible by a keyframe, so switching the
+     animations off would leave scene 2 empty and the progress bar at zero. */
+  .mg-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 12px;
+  }
+
+  .mg-dm {
+    position: static;
+    opacity: 1;
+    transform: none;
+  }
+
+  .mg-input span {
+    width: 7em;
+  }
+
+  .mg-progress i {
+    width: 100%;
+  }
+
+  .mg-badge,
+  .mg-toast {
+    opacity: 1;
+  }
+}

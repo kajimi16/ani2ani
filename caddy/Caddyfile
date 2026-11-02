@@ -1,0 +1,109 @@
+{
+	admin off
+	persist_config off
+	auto_https off
+}
+
+# Screening origin. Port 8080 only — no privileged ports, no TLS cert work.
+# Every media response is logged as JSON with bytes_written, which is the
+# independent measurement used to trust or reject the in-browser P2P numbers.
+:8080 {
+	log {
+		output file ./logs/access.log {
+			roll_size 512MiB
+			roll_keep 3
+		}
+		format json
+		level INFO
+	}
+
+	# Signaling (WebTorrent tracker WebSocket) and control API.
+	handle /tracker* {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	# Danmaku channel: one WebSocket per viewer, scoped to a room.
+	handle /ws/* {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	# Per-room media. Each room owns its HLS tree under data/rooms/<id>/hls, so a
+	# room's segments and manifest are addressed independently of every other room.
+	handle_path /media/* {
+		# Private rooms must not leak their segments by URL guessing, so every
+		# media request asks the API first. Public rooms are answered without a
+		# password, so this costs one loopback request per segment and changes
+		# nothing about what a public room serves. The whole /media tree is
+		# matched; the endpoint decides per room id.
+		forward_auth 127.0.0.1:8001 {
+			uri /api/media-auth
+		}
+
+		@manifest path *.m3u8
+		header @manifest Cache-Control "no-store"
+
+		@segment path *.ts
+		# Caddy maps .ts to a Qt translation MIME type; MPEG-TS needs an explicit value.
+		header @segment Content-Type "video/mp2t"
+		header @segment Cache-Control "{$SEGMENT_CACHE_CONTROL:public, max-age=31536000, immutable}"
+
+		header Access-Control-Allow-Origin "*"
+		# Follows ROOM_DATA_DIR so the media root can live on a roomier volume.
+		root * {$ROOM_MEDIA_ROOT:./data/rooms}
+		file_server
+	}
+
+	handle /vendor/* {
+		header Cache-Control "public, max-age=31536000, immutable"
+		root * ./web
+		file_server
+	}
+
+	handle /fonts/* {
+		header Content-Type "font/woff2"
+		header Cache-Control "public, max-age=31536000, immutable"
+		header Access-Control-Allow-Origin "*"
+		root * ./web
+		file_server
+	}
+
+	# /r/<id> serves the room shell; the id is read from the path by the page.
+	handle /r/* {
+		rewrite * /room.html
+		header Cache-Control "no-store"
+		root * ./web
+		file_server
+	}
+
+	handle_path /hls/* {
+		@manifest path *.m3u8
+		header @manifest Cache-Control "no-store"
+
+		@segment path *.ts
+		# Caddy maps .ts to a Qt translation MIME type; MPEG-TS needs an explicit value.
+		header @segment Content-Type "video/mp2t"
+		# Immutable is right for a real screening (a segment is content-addressed by
+		# its position, and re-fetching it wastes origin uplink). It is wrong for
+		# measurement: a warm browser cache serves segments without any request
+		# reaching Caddy, while the P2P engine still counts the response bytes as
+		# "HTTP". The player then reports origin traffic the origin never saw, so the
+		# two accounts disagree and the round cannot be judged. Measurement rounds
+		# must run with SEGMENT_CACHE_CONTROL=no-store.
+		header @segment Cache-Control "{$SEGMENT_CACHE_CONTROL:public, max-age=31536000, immutable}"
+
+		header Access-Control-Allow-Origin "*"
+		root * ./hls
+		file_server
+	}
+
+	# Player page and bundle: never cache, so a redeploy is visible on reload.
+	handle {
+		header Cache-Control "no-store"
+		root * ./web
+		file_server
+	}
+}

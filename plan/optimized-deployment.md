@@ -1,0 +1,458 @@
+# 优化后的部署方案（由实测数字约束）
+
+本文件是 `report/hitsz-p2p-findings.md` 的施工版。所有参数标注了它的实测依据或未验证状态；
+没有依据的地方一律写明「待现场测量」，不写成结论。
+
+## 1. 拓扑
+
+```mermaid
+flowchart LR
+  subgraph origin[校内单机（社团自备）]
+    A[片源 mkv/mp4] -->|ffmpeg| B[HLS .m3u8 + .ts]
+    B --> C[Caddy :8080<br/>静态 + Range + 逐请求计账]
+    C --> D[node :8001<br/>tracker /tracker + /api/*]
+    D --> E[STUN udp/3478]
+  end
+  C -->|HTTP 分片| V1[观众 A<br/>浏览器]
+  C -->|HTTP 分片| V2[观众 B<br/>浏览器]
+  C -->|HTTP 分片| V3[观众 C<br/>浏览器]
+  V1 <-->|WebRTC 分片| V2
+  V2 <-->|WebRTC 分片| V3
+  V1 <-->|WebRTC 分片| V3
+  V1 -.->|信令 WS| D
+  V2 -.->|信令 WS| D
+  V3 -.->|信令 WS| D
+```
+
+关键量（实测，N=3、2.5 Mbps）：源站出口 ≈ **1 × 码流**（2.71 Mbps），每观众上行 ≈ **1.81 Mbps**，
+每观众连接数 2，稳态 P2P 66.7%（= 上限）。源站不再随人数线性增长，压力转移到观众上行与 AP 聚合。
+
+## 2. 转码
+
+已验证可用（本仓库测试片源即此参数产出，4 s 分片、61 片、78 MB）：
+
+```bash
+ffmpeg -re -i input.mkv \
+  -c:v libx264 -preset veryfast -profile:v main \
+  -b:v 2500k -maxrate 2800k -bufsize 5000k \
+  -g 100 -keyint_min 100 -sc_threshold 0 \
+  -c:a aac -b:a 128k -ac 2 \
+  -f hls -hls_time 4 -hls_list_size 0 \
+  -hls_segment_filename "/srv/hls/stream/seg_%04d.ts" \
+  /srv/hls/stream/index.m3u8
+```
+
+要点与依据：
+
+- **`-g`/`-keyint_min`/`-sc_threshold 0` 必须写死**，让关键帧对齐 4 s 分片边界；否则分片边界与
+  关键帧错位，切片时插入的位移会放大体积，P2P 传输的分片大小不均也会拖慢同步。
+- **`-re` 只在直播/模拟推流时用**；离线转码去掉 `-re` 才能全速跑。
+- 码率按现场上行选：**优先 720p / 1.2–1.8 Mbps**。理由是总量守恒——
+  每观众上行 ≈ 码流，AP 聚合 ≈ N × 码流（见 §6 表），压码率对 AP 是线性收益。
+- 送审/彩排用的点播可另出一份 1080p 2.5 Mbps，放映当晚按现场负载二选一。
+
+## 3. 静态分发（Caddy）
+
+本仓库 `caddy/Caddyfile` 即成品，三个非默认点都是踩坑结论：
+
+| 配置 | 为什么 |
+|---|---|
+| `header @segment Content-Type "video/mp2t"` | Caddy 的 MIME 表把 `.ts` 映射到 `text/vnd.trolltech.linguist`（Qt 翻译文件）。不覆盖会让部分播放器/代理按文本处理分片 |
+| `header @manifest Cache-Control "no-store"` 与 `@segment ... immutable` | m3u8 必须每次取新，分片可永久缓存；混用会导致「换了片源还播旧的」或「每片都回源」 |
+| `log ... format json` + `size` 字段 | 逐请求字节数是 P2P 占比的独立第二口径。注意字段名是 `size`（响应体），不是 `bytes_written`（此处为 null） |
+
+Range 由 `file_server` 原生支持，`check-stack.sh` 用 `Range: bytes=0-1` 断言必须返回 **206**。
+
+`check-stack.sh` 共 9 项断言：播放页、`<video>` 元素、播放器 bundle、m3u8 结构、分片 Range(206)、
+分片 Content-Type、`/api/health`+`/api/stats` JSON、tracker WS 握手、**STUN binding 回显源地址**。
+最后一项是跨子网直连的必要条件（Chrome 用 mDNS 隐藏 host 候选），因此不能只看进程存活 ——
+脚本会主动发一个 RFC 5389 Binding 请求并核对 `XOR-MAPPED-ADDRESS` 的端口是否等于自己的源端口。
+
+## 4. 控制面（tracker + STUN）
+
+```bash
+bash scripts/start.sh     # 起 node(:8001, tracker+STUN) 与 caddy(:8080)
+bash scripts/stop.sh      # 干净收掉，无残留
+```
+
+- tracker 用 `bittorrent-tracker` 的 WS `noServer` 模式挂在同一进程，经 Caddy 反代 `/tracker`。
+  选它而不选 `wt-tracker`：后者依赖 `uWebSockets.js` 的 GitHub 预编译包，在离线/无构建环境的校内机器上
+  装不上；纯 JS 版只吃 CPU，200 人的 annouce 广播压力可以接受（**未压测**，见 §8）。
+- **STUN 必须自建在校内**：Chrome 把 host 候选替换成 `.local`（mDNS），跨子网不可解析；
+  校内 STUN 返回的 `srflx` 就是观众自己的校园网地址，对方可直接路由。实测 1898 次 Binding 请求、
+  825 次来自 `10.249.x.x`，说明这条路径确实在用。
+- 端口全部高位（8080/8001/3478 UDP），全程用户态，`Ctrl-C` 即净。不需要 `sudo`、systemd、TLS。
+
+## 5. 播放器参数（每个都有实测理由）
+
+| 参数 | 值 | 依据 |
+|---|---|---|
+| `httpDownloadTimeWindow` | **60**（不可低于 ~30） | 压到 10 s 时 2/3 观众冻在 4.0 s、零 HTTP 兜底；60 s 时稳态正常 |
+| `p2pDownloadTimeWindow` | **120** | 默认 6000 s 导致每个观众 6 s 内预取 75.7 MB（整条流），播放头卡住 |
+| `maxBufferLength` / `maxMaxBufferLength` | 20 / 40 | 缓冲越深、观众越不同步，P2P 可用窗口越小；20 s 实测可稳定播放 |
+| `backBufferLength` | 30 | 让刚播完的分片还能供给落后观众 |
+| `swarmId` | `hitsz-screening` 等固定值 | 同一 swarm 才能互相发现；换成随机值等于关掉 P2P |
+| 共享播放时钟（默认开） | 服务端 `sync.epochMs`，播放器按 `(now−epoch) mod duration` 定位 | 这是「进网页就能一起看」的实现：晚到者直接落到同一帧（实测 3 台误差 ≤0.3 s）。关掉后只有同时刷新才同步，且晚到者从 0 起播会拉低 P2P |
+| `?sync=off` | 退回从 0 起播 | 调试/单人回看用 |
+| `rtcConfig.iceServers` | 仅 `stun:<当前主机>:3478` | 不引入公网 STUN（避免把校内地址暴露给外部服务），也不引入 TURN（无中继预算） |
+| `?p2p=off`（URL 开关） | 应急关闭 | hitsz 若中途封锁 WebRTC，同一页面加参数即回退纯 HTTP；已实测：`peers=0`、HTTP 字节正常累计、播放不受影响 |
+| 角色默认值 | **全员 follow（缓冲 20 s）** | 库的 demand window 已把回源摊平：N=6 实测最大仅 1.45× 公平份额。加 lead 反而把回源集中到一台（4.50×、独占 75%），在 WiFi 上是亏的 —— 详见报告 §5.4 |
+| `?role=lead`（缓冲 90 s） | **仅在回源退化时**手动指定 | 判据：`verify-round.sh` 输出 `worst/fair > 2.0`。此时把有线口、上行最好的那台设为 lead，好过随机一台成为受害者 |
+
+## 6. 容量与调度
+
+实测换算（2.5 Mbps 码流、同步观影）：源站出口 ≈ 码流，每观众上行 ≈ 码流，无线聚合 ≈ N × 码流。
+
+| 观众数 | 源站出口 | 每观众上行 | 无线聚合需求 | 判据阈值 `0.85(N−1)/N` |
+|---|---|---|---|---|
+| 3（实测） | 2.7 Mbps | 1.8 Mbps | 8 Mbps | 56.7% |
+| 6（实测，默认配置） | 2.7 Mbps | 2.26 Mbps | 16.25 Mbps | 70.8% |
+| 20 | 2.7 Mbps | 2.4 Mbps | 54 Mbps | 80.8% |
+| 50 | 2.7 Mbps | 2.45 Mbps | 135 Mbps | 83.3% |
+| 200 | 2.7 Mbps | 2.49 Mbps | 541 Mbps | 84.6% |
+| 300 | 2.7 Mbps | 2.49 Mbps | 812 Mbps | 84.7% |
+
+由此的调度结论：**瓶颈是 AP，不是服务器**。单台 802.11ac AP 现实聚合约 200–400 Mbps，
+200 人同 AP 在物理上做不到流畅 —— 要么多人分散到多个 AP/有线口，要么把码率压到 1.2 Mbps
+（200 人 ≈ 260 Mbps）。同理**不要**指定 lead 把源站压力集中到一台：实测单台上行被推到
+≈8.8 Mbps，而 WiFi 单机上行远比这脆弱。`p2pMaxPeers` 默认 50，
+在单 AP 场景建议调到 **8–12**，让每台只服务邻近少数观众（此值在本轮未单独实测，属待验证项）。
+
+## 7. 运营 runbook（放映当晚）
+
+1. 提前 30 分钟：`bash scripts/start.sh`；`bash scripts/check-stack.sh` 必须退出 0。
+   **仍要用一台手机（走 WiFi）打开 `campus` 地址并确认 `peers ≥ 1`** —— 宿主防火墙已确证放行
+   （见 §7.1），但 `check-stack.sh` 全是 loopback，探不到校园网的 ACL/客户端隔离，也探不到
+   WebRTC 的实际连通。若页面打不开：查 `sudo ufw status verbose` / `sudo nft list ruleset`；
+   若页面能开但 `peers=0`：UDP 3478 或对端 WebRTC 被拦。
+2. 把打印出的 `campus http://<校内IP>:8080/` 发到群里；提醒点一次「开声音」（浏览器自动播放策略）。
+   **提醒所有人手机保持亮屏、页面在前台**：实测手机锁屏后浏览器限流，该观众既不再拉流也不再播种，
+   `playhead` 断言会直接把这一轮判成无效测量。建议放映时关掉自动锁屏。
+3. **开播时点由服务端统一**：调用一次 `curl -X POST localhost:8001/api/sync` 把 epoch 设为当下，
+   此后任何人打开网页都会自动落到同一帧，**不需要全体同时刷新**（晚到者也会自动对齐）。
+   想改开播时刻（例如推迟 2 分钟）就再次 `POST /api/sync`，全体会在 5 s 内自动追上。
+   注意：`measure-round.sh` 的 `/api/reset` 会把 epoch 重置为轮次起点，所以压测轮本身就是同帧起跑。
+   **默认不要指定 lead**：直接用不带参数的地址，全员 follow。只有在压测/彩排时
+   `verify-round.sh` 报 `origin spread ... concentrated` 才加一台 `?role=lead`（有线口优先）。
+4. 中控台看 `curl -s localhost:8001/api/health`：`clientsLive` 是当前在线观众，`swarms[].peers` 是 swarm 人数。
+5. 验收/压测时必看两行：`played +Xs over Ys wall`（低于 50% 判无效——预取假象）
+   与 `evidence`（`network-only` 才算现场数据；`MIXED` 说明混了本机浏览器，
+   `all-local` 说明全是本机进程）。`measure-round.sh` 也要求 `duration >= 190 s`，
+   否则稳态窗口会超出轮次结束、把所有在线设备误判成"窗口末离线"。
+6. 观众报「卡」：诊断数字现在**只有房主看得到**（页面统计行按 `isHost()` 显示，
+   普通观众界面只有画面、弹幕和输入框）。所以别让观众念数字，改从服务端看：
+   `/api/stats` 的 `clients[]` 是逐 peer 的 `downP2P` / `downHTTP` / `peers` / `playedSec` /
+   `buffered` / `syncDrift`（只有这些数值字段入库，没有逐 peer 的 `p2pRatio`，要自己算
+   `downP2P/(downP2P+downHTTP)`；`syncMode` 不上报）。`/api/report` 每条采样另带
+   `peerId` 与 `X-Forwarded-For`。
+   该 peer 的 `peers=0` 且下载几乎全在 `downHTTP`，说明其 WebRTC 没连上（回退 HTTP 仍能看）；
+   `peers≥1` 但 `playedSec` 落后很多，是拉下进度，等它追上或让其刷新。
+   排查时也可临时把该观众设成房主，其界面即恢复显示。
+7. 若整场 WebRTC 异常（校网策略变更）：群发带 `?p2p=off` 的地址，切纯 HTTP；若此时服务器上行不够，
+   立刻降码率重转（`§2` 的 720p/1.2 Mbps 版本）。
+8. 收尾：`bash scripts/stop.sh`；产物在 `rounds/<label>/`。
+
+## 7.1 首次联调前的可达性检查
+
+| 检查 | 为什么不能用其他方式代替 |
+|---|---|
+| 另一台设备（手机/笔记本）打开 `campus` 地址 | `check-stack.sh` 全是 loopback，探不到宿主机 INPUT 链的默认策略 |
+| 该设备上确认 `peers >= 1` | TCP 通只说明页面能开；UDP 3478 被拦时 WebRTC 起不来，表现为 P2P 0%、`peers=0` |
+| ~~`sudo ufw status verbose` / `nft list ruleset`~~ | **已确证（2026-11-02）**：`ufw` 状态「不活动」；`iptables -S INPUT` = `-P INPUT ACCEPT` 且**零规则**；`inet filter` 表不存在（`/etc/nftables.conf` 未加载）；`rp_filter=2`（loose，不阻断非对称路径）。宿主防火墙不拦 8080/TCP 与 3478/UDP |
+
+注意：**不要**用容器或本机 `curl` 校园网卡地址来判断可达性 —— 容器流量走 `br-*` 网桥，
+本机流量走 loopback，两条路径都可能绕开 `enp7s0` 上的规则；Docker 还会自行插入 ACCEPT 规则，
+把默认 DROP 掩盖掉。正向结果一律视为不确定。
+
+
+## 7.2 网页界面：开房间 / 上传 / 开播
+
+产品形态是一层很薄的界面，架在已经验证过的传输层上（P2P、共享时钟、tracker、STUN 都不变）。
+
+| 页面 | 路径 | 作用 |
+|---|---|---|
+| 首页 | `/` | 直播门户式排布：顶栏 / 分类胶囊 / 焦点直播 + 2 列卡片 + 最近看过 / 推荐流无限下拉；「我要开播」弹窗里开房间，首访弹一次三幕动画演示 |
+| 房间页 | `/r/<id>` | 播放器 + 弹幕；房主额外看到统计行、上传、开播、结束、删除 |
+
+房主身份靠**能力令牌**而不是账号：`POST /api/rooms` 返回一次 `ownerToken`，页面存在该浏览器
+的 `localStorage` 里，之后每次房主操作用 `x-room-token` 头带上。令牌永不进列表接口，
+比较用 `timingSafeEqual`。丢掉令牌等于失去房间控制权（房间仍可被看，只能删除重建）。
+
+首页与房间页是**两套皮肤**：`app.css` 仍供重置、字体与房间页；首页另挂 `portal.css`，全部规则
+作用域在 `body.portal` 下，改首页不会波及正在放映的房间页。两页共用同一份 `/api/rooms` 数据，
+首页只做展示与筛选，不新增接口。
+
+### 版式（房间页）：复刻目标站的可测参数
+
+房间页照 `enscribe.dev` 的设计语言做，参数是从目标页 `getComputedStyle` 实测出来的，不是目测：
+
+| 项 | 实测值 | 说明 |
+|---|---|---|
+| 栅格 | 12 栏 × 72px，gutter 27px，max-width 75.94rem | 1280 视口下 `page-grid` 宽 1215px |
+| 左导航 | 第 1–2 栏（x=52，宽 171px），竖排，行距 5px，`margin-top: 2.35rem` | 导航比正文顶低 37.6px，不抢首行视线 |
+| 主列 | 第 3–12 栏（x=250，宽 963px） | 页脚与主列同栏 |
+| 正文列 | 666px | 列表与统计都收在这个宽度内，不比主列更宽 |
+| 根字号 | `clamp(100%, 77.78% + 0.2778vw, 122.22%)` → 1280 下 16px | 少了这条，所有字阶会整体大 2px |
+| 字体栈 | `MD Lorien, MD Lorien Fallback, IBM Plex Sans, Shippori Mincho B1, IBM Plex Sans Fallback, …` | 逐字取自目标站 `--font-sans` / `--font-mono` 令牌，不按印象写 |
+| 正文 | 16.0006px / 24.001px 行高 | 字阶只用于标题与导语 |
+| 次级文字 | `#686056`（深色 `#afa391`） | 导航、元信息、页脚 |
+| 链接 | 1px 下划线，`text-underline-offset: -0.06em` | 悬停时下划线才真正显色 |
+| 色板 | 纸白 `#faf4ed` / 暗 `#11100e`，前景 `#332b21` / `#feead0` | 用 `light-dark()`，跟随系统偏好，无手动开关 |
+| 圆角 | xs .125 / sm .25 / md .375 / lg .5 rem | 卡片几乎无圆角；图标按钮 6px |
+| 页脚 | flex space-between，图标 32×32 | 左侧放片源事实（分片数 / 时长 / 码率），右侧图标 |
+
+### 房主位认领：别让一次 409 变成请求风暴
+
+房间页承载房主认领：每次轮询发现「座位空着」就 `POST /api/rooms/<id>/host`。两个坑：
+
+1. **房主第一次轮询早于自己第一次 `/api/report`**，此时它不在 `participants()` 里，服务端回
+   409「that viewer is not in the room right now」。现在凭 token 认领空位不再要求在线列表
+   命中——token 已经证明合法性，在场记录只对「转交给别人」有意义。
+2. **失败后立刻 `refreshRoom()` 会重入 `renderPeople → ensureHost`**，实测 1 秒内打出 34 次
+   POST。现在只在成功时刷新，失败走 1.5s → 3s → 6s → 10s 退避：瞬态失败下一次就能补上，
+   持续失败收敛到每 10 秒一次。
+
+修复后实测：空房首次轮询即拿到房主位（1 次请求）；强制 409 时 12 秒内只有 2 次请求。
+
+### 首访演示：三幕纯 CSS 动画
+
+「怎么玩」不再用首页横幅——横幅会永久占掉 200px，而它讲的东西一个观众只需要看一次。
+改为首次进入弹一次 `dialog`（`localStorage.onboardingSeen`），三幕各自是一段 CSS 关键帧动画：
+
+| 幕 | 文案 | 画面 | 关键帧 |
+|---|---|---|---|
+| 1 创建房间 | 上传想要放映的片源即可创建属于你的放映室 | 片源卡片滑入 → 导轨光点跑到房间框 → 进度条 0→100% → 「待开播」徽标弹出 | `mg-file-in` / `mg-dot-run` / `mg-fill` / `mg-pop` |
+| 2 弹幕体验 | 进入你的房间，一起用弹幕交流吧 | 四条弹幕错峰从右向左滑过屏幕，输入框逐字打出这句话 | `mg-dm-run` / `mg-type` |
+| 3 同步播放 | 进度与房主同步，当然也能自己回放精彩片段 | 房主指针跳到 66% → 你自己拉回去（10%）→「落后房主 12 秒」浮出 →「对齐到房主」按下 → 你跟到 66% | `mg-host-move` / `mg-you-move` / `mg-toast-in` / `mg-press` |
+
+动画只在 `.is-active` 存在时播放；切幕时先 `classList.remove` 再强制一次 `offsetWidth` 回流后加回，
+所以来回切幕是重播而不是停在最后一帧。全部动画 5.4 s，与 JS 的切幕间隔对齐；`prefers-reduced-motion`
+下关掉动画并让徽标/提示常显。
+
+### 私密房间：密码是真的锁，不是装饰
+
+建房时可选**公开 / 私密**。私密房间要满足三条，缺一条密码就只是摆设：
+
+| 环节 | 做法 |
+|---|---|
+| 不出现在首页 | `/api/rooms` 过滤掉 `visibility === "private"`，私密房不在任何列表里 |
+| 页面要密码 | `GET /api/rooms/<id>` 无凭据返回 `403 {locked:true}`，只回房间标题，不含片源、分片、房主信息 |
+| 分片也要密码 | Caddy 对 `/media/*` 走 `forward_auth 127.0.0.1:8001`，命中 `/api/media-auth`；公开房直接放行，私密房看 cookie |
+
+口令用 `scrypt`（16 字节盐 + 32 字节 key），磁盘上只有 `passwordSalt`/`passwordHash`，比较用
+`timingSafeEqual`。**通过密码后发的是 HttpOnly cookie**（`room-access-<id>`，30 天），
+因为分片请求是 hls.js 发的，带不了自定义头——cookie 是唯一能同时覆盖 API 与媒体的凭据。
+`publicRoom()` 与 `roomView()` 都会剥掉 `ownerToken` / `passwordSalt` / `passwordHash` /
+`accessTokens`，列表接口不可能泄露。
+
+三条进入路径：
+
+1. **房主**：`x-room-token` 头直接放行（建房时同时下发访问 cookie，否则房主自己放的片子也取不到分片）。
+2. **门户搜索框**：首页没有公开房匹配时，按 Enter 把输入当密码提交到 `POST /api/rooms/unlock`，
+   命中就跳转。这是没有 id 时的唯一入口——私密房本来就不该被枚举。
+3. **直接链接**：`/r/<id>` 打开展示密码闸门，解锁后 `location.reload()`，cookie 已生效。
+
+尝试次数按来源 IP 限制：10 次 / 10 分钟，超了返回 429。密码长度限 4–32 字符。
+
+### 版式（首页）：直播门户式排布
+
+首页改成深色内容聚合门户，参数同样是从渲染结果里量出来的（1440 视口）：
+
+| 项 | 实测值 | 说明 |
+|---|---|---|
+| 底色 | `#18191B` | 卡片浮起用 `#1F2023`，次级面 `#26282C`，分隔线 `rgba(255,255,255,.07)` |
+| 品牌色 | `#FB7299`（悬停 `#FF85A9`） | 只用于 Logo、当前导航、开播按钮、放映中徽标、直播头像描边 |
+| 顶栏 | 高 60px，`position: fixed`，半透明 + 12px 毛玻璃 | 左侧 Logo + 一级导航，中间胶囊搜索，右侧容量 / 头像 / 我要开播 |
+| 分类栏 | 32px 高胶囊，横向可滚，选中态 `rgba(251,114,153,.14)` 底 + 粉字 | 筛选桶：全部 / 放映中 / 待开播 / 处理中 / 已结束 |
+| 首次进入浮层 | 620px 宽、220px 高动画舞台，3 幕，5.4 s/幕自动前进 | 不再占用首页版面：只弹一次，之后从导航「使用指南」重开 |
+| 主栅格 | `55fr / 45fr`，间距 20px | 1440 下焦点区 746px、右侧 611px，两列卡片各 298px |
+| 卡片封面 | 16:9 圆角 8px，`object-fit: cover` | 左下角眼睛 + 在线人数（非直播状态改显示相对时间），右下角状态标签 |
+| 推荐流 | `repeat(auto-fill, minmax(220px, 1fr))` | 每页 12 张，`IntersectionObserver` 提前 600px 预取下一页 |
+| 断点 | ≤1120px 单列；≤900px 隐藏一级导航；≤720px 两列流 + 16px 边距 | 390px 下无横向溢出 |
+
+封面图在转码结束那一刻从第一个分片里抽一帧（`poster.jpg`，宽 640，`-ss 1`），由 Caddy 的
+`/media/<id>/poster.jpg` 直接出图。抽帧失败只是没有封面，不会让房间转码失败。
+
+「最近看过」不是假数据：房间页载入时把 `{id, at}` 写进 `localStorage.recentRooms`（最多 12 条），
+首页据此渲染头像行，正在放映的房间描粉边。没有任何历史时整段隐藏。
+
+### 字体：一处无法合法复刻的地方，说清楚
+
+目标站的正文字形是 **MD Lórien**（Mass-Driver 的商业字体，按次租用）。它 **没有**被打包进来，
+因为再分发会侵权。处理办法分两层：
+
+1. **字体栈按目标站原样书写**，`MD Lorien` 排在首位 —— 谁的机器上装了它，就直接用上，效果与目标站一致。
+2. **复刻目标站自己声明的回退度量**。目标站的样式里有：
+
+   ```css
+   @font-face { font-family: "MD Lorien Fallback"; src: local(Georgia);
+                size-adjust: 97.7891%; ascent-override: 90.8077%;
+                descent-override: 31.9054%; line-gap-override: 0% }
+   ```
+
+   也就是说，**在没有 MD Lórien 的机器上，目标站自己渲染的就是「Georgia + 这套度量」**。
+   把这几个数字照抄，我们的回退结果与目标站的回退结果在行距和字宽上一致。
+
+可自托管的部分已全部本地化（SIL OFL 1.1，`web/fonts/`）：IBM Plex Sans 可变字重（含 Latin Ext 子集）、
+IBM Plex Sans Italic、IBM Plex Mono Regular/Medium。选本地而非 CDN 的原因很实际：校园网可能拿不到
+字体 CDN，而放映中途字体加载失败会导致整页重排。
+
+**因此仍存在的差异**：有 MD Lórien 的机器上两者完全一致；没有时，本页是 Georgia 系，
+目标站也是 Georgia 系，但**字形本身（Caslon 风格的衬线）无法复制**。中文则落到系统宋体/黑体
+（目标站的 `Shippori Mincho B1` 是日文明朝体，中文字形不对，故排在中文系统字体之后）。
+
+实测核对（1280 视口，与目标页逐项对齐）：body `16.0006/24.001`、nav `x=52 w=171`、
+main `x=250 w=963`、列表行宽 `666`、无横向溢出。深色模式下背景 `#11100e`、前景 `#feead0`、
+次级 `#afa391`，与目标站同值。
+
+移动端（<48rem）栅格收为单列，导航改为横排。
+
+字体加载实测：`document.fonts` 中 `MD Lorien Fallback`（Georgia + 度量覆写）、`IBM Plex Sans`、
+`IBM Plex Mono` 均为 `loaded`；正文 `16.0006px / 24.001px` 未因换字体而改变；
+`/fonts/*.woff2` 以 `font/woff2` + `immutable` 提供。
+
+
+### 房主、昵称与同步策略
+
+放映的同步基准是**房主的播放位置**，不是服务器时钟。固定纪元无法表达三件真实会发生的事：
+房主暂停、房主拖条、某个观众卡住。
+
+| 机制 | 实现 |
+|---|---|
+| 昵称 | 首页输入，存 `localStorage.displayName`，随每秒上报带上；房间页「房间里」列出所有人，房主带标记 |
+| 房主归属 | `room.hostPeerId`。持有 ownerToken 的浏览器进房时自动认领空位；也可转交给任意在房观众 |
+| 同步基准 | 房主每秒上报 `(videoTime, playing)`，服务端转成 `hostRef = {videoTime, at, playing}`；观众按 `videoTime + (now − at)` 外推，房主暂停则冻结 |
+| 房主离开 | 房主且有他人观看时 `beforeunload` 弹确认，逼出转交；崩溃未转交的，席位在 15 s 后判定 `hostAway`，持 token 者自动接管 |
+| 自由拖条 | 用户自行 seek → `syncMode = free`，停止拉回，页面出现「你已离开房主的进度 · 对齐到房主」 |
+| 卡顿 | **不自动追赶**。`waiting` 后 4 s 内视为恢复期，故意不 seek（seek 会重启下载、越追越落后）；落后 ≥ 5 s 才提示「落后房主 N 秒」，由观众决定 |
+| 提示抑制 | 观众选「留在这里」后记录当前落后量，**再落后满 5 s** 才重新提示，否则每秒都弹 |
+
+三个容易做错的地方，都是实测中发现的：
+
+1. **晚到 ≠ 卡顿**。第一版把两者混为一谈，晚进房的观众稳定停在落后 42.9 s 上永不追平。
+   现在 `initialAligned` 标记首次对齐：拿到房主基准后立即跳过去，此后的落后才进入「先问再动」。
+2. **重启放映对房主无效**。观众跟着 `hostRef` 回到片头，房主不属于任何基准，仍停在自己位置，
+   于是全员被拉回房主的旧位置。现在监听 `startedAt` 变化，房主也 seek 到 0。
+3. **提示关掉就立刻弹回**。`ignoreLag()` 只清了标志位，下一秒条件照旧成立。加了
+   `lagPromptFloor`，必须再落后一个阈值才重新提示。
+
+实测（两个独立浏览器进程）：
+
+```
+房主 vt=27.2 → 观众 vt=27.3（lag −0.1）
+房主跳 +40 s → 观众提示「落后房主 40 秒」，位置保持 24.3 不跳
+点「留在这里」→ 8 s 内提示不再出现（lag 仍 40.0）
+点「对齐到房主」→ vt=78.0，lag 0.1
+转交房主 → hostPeerId 立即切换，新房主从自己当前位置继续
+杀掉房主进程 → 15 s 后 hostAway=true，持 token 者自动接管
+```
+
+
+### 弹幕
+
+niconico 风格：文字从画面右侧滑到左侧，同时页面内有一份带发言人的记录。
+
+| 部分 | 位置 | 为什么在这里 |
+|---|---|---|
+| 弹幕层 `.danmaku-layer` | **Plyr 容器内部** | Plyr 全屏的是它自己的 `.plyr` 元素，层在里面才随全屏一起保留 |
+| 输入框 | 播放器下方 | 不遮挡画面；全屏时不打字是合理取舍 |
+| 侧栏记录 | 页面内、播放器之外 | 全屏时自然消失，不需要监听全屏事件去手动隐藏 |
+
+实现要点：
+
+- **通道**：每个房间一条 WebSocket（`/ws/room/<id>`，Caddy 反代到 node）。服务端保留最近 200 条，新加入者先收历史（只进侧栏，不在画面上补播）。
+- **渲染**：`transform: translate3d()` + CSS animation，单一合成层，不触发重排；`pointer-events: none` 让点击穿透到播放器。
+- **分道**：14 条轨道，每条记录占用到某时刻为止；全部占用时**丢弃新弹幕而不是重叠**——叠在一起的文字读不了，缺一条反而无感。
+- **断线**：`close` 后 4 秒重连。放映一两个小时、校园网抖动是常态，静默丢弹幕比断线提示更糟。重连期间**只禁用发送按钮，不禁用输入框**：禁用聚焦中的输入框会让它失焦并取消正在进行的合成，抖动一次就把拼音吃掉，而 4 秒一轮的重连会反复触发；`send()` 在 socket 没连上时本来就返回 false，文字留在框里，状态行说明原因。
+- **锚点**：每条弹幕带发送者的 `videoTime` 入档，但**按到达即时渲染**。放映是同步观看，按时间戳补播会让画面上的弹幕慢半拍。
+- **输入法**：合成期间按下的 Enter 属于输入法（选词、上屏生拼音），所以输入框的 `keydown` 先看 `event.isComposing || keyCode === 229`，`compositionend` 之后再多放一个宏任务。抢走这个 Enter 的后果不是「少按一次」：还没上屏的拼音被当弹幕发出去，`preventDefault()` 又取消了这次合成，选中的字直接消失，手感就是「一卡一卡、字被吞」。首页标题框同理，否则会在拼音还没上屏时把房间建出来。
+
+实测：
+
+```
+WS 往返：history → welcome → danmaku（经 Caddy 反代）
+标签页 A 发送 → 标签页 B 侧栏追加「小明 | 跨标签页实时弹幕」，画面出现 1 个滚动项
+结构断言：.danmaku-layer 的父元素是 .plyr（全屏根），侧栏与输入框都不在 .plyr 内
+```
+
+程序化全屏在无头浏览器被拒绝（`TypeError: not granted`，需用户手势），所以全屏行为是通过
+DOM 归属断言确认的，不是看着画面确认的——这一点如实记下。
+
+### 播放器：Plyr（MIT）
+
+播放器 UI 用 **Plyr 3.8**（MIT）。选它的决定性理由是它与 p2p-media-loader 的兼容方式：
+p2p-media-loader 的官方支持列表里有 Plyr / Vidstack / DPlayer / Clappr / MediaElement / OpenPlayerJS / PlayerJS，
+而 Plyr 只是**包在同一个 `<video>` 元素外面的控制层**，不接管媒体加载 —— hls.js 仍然拥有 MediaSource，
+p2p-media-loader 仍然包住它的分片加载器。任何"自带播放器内核"的方案都会悄悄绕过 P2P 通路。
+
+实测（两个标签页同一房间）：Plyr 接管后 `peers=2`、`downP2P` 1.65 MB / 5.69 MB、
+`upP2P` 5.37 MB / 1.33 MB，P2P 占比 10.9% / 37.5%（含冷启动窗口）。**P2P 通路未被破坏。**
+
+接入细节：
+
+- 只挂 UI，不碰 source：`new Plyr(video, {...})` 之后照旧 `hls.attachMedia(video)`。
+- 控制项裁到放映需要的集合（播放 / 进度 / 时间 / 音量 / 设置 / 画中画 / 全屏），`settings` 只留倍速。
+- 中文化通过 `i18n` 覆盖，`--plyr-color-main` 对齐页面色板的绿色。
+- **移除了原来的独立「开声音」按钮**：它固定在底部中央，正好压在 Plyr 控制条上。
+  自动播放只能静音，取消静音的手势由 Plyr 自己的音量控件承担。
+- 未采用 Vidstack / ArtPlayer：前者更漂亮但要接管 provider 加载路径，与 p2p-media-loader 冲突；
+  后者不在官方支持列表内。真要换，先验证 P2P 仍能连通。
+
+### 数据与磁盘
+
+```
+$ROOM_DATA_DIR/rooms.json          房间元数据
+$ROOM_DATA_DIR/rooms/<id>/source.* 上传的原片（转码成功后默认删除）
+$ROOM_DATA_DIR/rooms/<id>/hls/     转码产物（index.m3u8 + seg_*.ts）
+```
+
+- **媒体根可换盘**：`ROOM_DATA_DIR` 决定存放位置，`ROOM_MEDIA_ROOT` 由 `start.sh` 自动跟随，
+  Caddy 用 `/media/<id>/hls/*` 映射过去。本机根分区曾只剩 1.4 GB，而 `/media/<挂载点>`
+  （ntfs3，1.9 T）有 479 GB 可用；换盘只需
+  `ROOM_DATA_DIR=/media/<挂载点>/rooms-data bash scripts/start.sh`，`/media/*` 随之生效
+  （实测外挂盘上转码、分片、播放全通）。
+- **源文件在转码成功后删除**（`ROOM_KEEP_SOURCE=1` 可保留）。实测 900 s 片源 296 MB、
+  分片 308 MB，留着源等于让每集多占近一倍空间。失败时才保留源，因为重试不该再传一次。
+- 房间间互不可见：每个房间独立 HLS 目录，路径由服务端拼接，ID 只允许 `[a-z0-9]{4,32}`。
+  `/media` 路径穿越的 5 种编码变体实测全部 404（Caddy 归一化后拒绝）。
+
+### 转码参数（现场唯一容易搞错的地方）
+
+关键帧必须与 4 秒分片边界对齐，因此 `-g 100 -keyint_min 100 -sc_threshold 0` 与
+`-force_key_frames expr:gte(t,n_forced*4)` 缺一不可。少一个，切片会补到下一个关键帧，
+分片大小忽大忽小，P2P 传输变抖、共享时钟也会跟着漂。
+
+实测转码速度约 24×（1200 秒片子约 50 秒转完），输出 300 个分片。上传进度用 XHR 的
+`upload.onprogress`（`fetch` 仍无法报告上传进度），转码进度来自 `ffmpeg -progress pipe:1`
+的 `out_time_ms`。
+## 8. 尚未验证 / 需要现场测的项目
+
+- 真实设备 WiFi 的双向吞吐、睡眠省电、同 AP 信道竞争 —— 本机 3–6 个独立浏览器进程只验证了
+  协议、埋点与校园网卡路径，未验证真实无线环境。
+- **跨主机可达性**：宿主防火墙已确证放行（INPUT ACCEPT、ufw 不活动），**跨子网 WebRTC 已用
+  1 台真实手机实测打通**（`10.250.x.x` ↔ `10.249.x.x`，窗口内纯 P2P、源站 0 字节）。
+  但跨子网成功率随设备数/AP 环境变化，未统计。
+- **尚未完成可判定的真实设备轮**：手机那轮因 N=2 且手机锁屏导致播放头停滞，被判无效
+  （`rounds/real-n2/`，`exit=2`）。需要 ≥3 台**保持亮屏**的设备才能产出可判定轮。
+- 20 人以上 swarm 的分流率、tracker 广播压力、`p2pMaxPeers` 取值。实测只到 N=6。
+- leader 模式只在回源退化时启用；它在 N=6 实测中把单台上行推到 132 MB/120 s（≈8.8 Mbps），
+  N≥20 若真需 lead，应每场地多台而非一台，未实测。
+- hitsz portal 认证是否会在放映中途超时踢线（若会踢 → 全体掉线，需 3 小时观察）。
+- 跨楼 srflx 直连成功率（测试 A/B 只在 ICMP/HTTP 层通过，WebRTC 成功率需多设备轮）。
+- 安卓客户端：本轮不需要。只有当真实轮 6 次全部不达标、且确认瓶颈在浏览器（而非 AP/校网）时，
+  才按 ExoPlayer + p2p-media-loader 原生集成推进；WebView 包裹无收益（等于换皮浏览器）。
+
+## 9. 与原始方案的差异（为什么改）
+
+| 原方案 | 改为 | 原因 |
+|---|---|---|
+| 稳态 P2P ≥ 70% 固定阈值 | `0.85 × (N−1)/N` | N=3 时上限只有 66.7%，固定 70% 数学不可达 |
+| `wt-tracker` + docker | `bittorrent-tracker` 纯 JS | 校内机器常见无 docker、`uWebSockets.js` 预编译包易装不上 |
+| nginx 静态托管 | Caddy 单文件 | nginx 无官方静态二进制；Caddy 自带 Range/HTTP2/JSON 计账 |
+| 「P2P 分流 90%」经验值 | 实测 66.7% @ N=3 = 上限 | 经验值来自大规模 swarm，小规模下 `1/N` 源站份额占比更大 |
+| 「每观众上行贡献 ~2.5 Mbps」 | 实测 1.81 Mbps @ N=3 | 与 `(N−1)/N × 码流` 的质量守恒一致；N 大时趋近码流 |
+| 只用公网 STUN | 校内自建 STUN | Chrome mDNS 隐藏本地 IP，跨子网必须靠 srflx |
+| 未提预取窗口 | 显式 60/120 s | 默认窗口会在 VOD 上整条预取，实测直接卡死播放 |
+| 未提同步 vs 回源的矛盾 | 默认全员 follow，`?role=lead` 仅在回源退化（worst/fair > 2.0）时手动开 | 实测库已自行摊平回源（1.45×）；加 lead 集中到 4.50×、单机上行 8.8 Mbps，只为 +1.6pp |
+| 「页面加等待开播同步页」（原方案第 7 节） | 服务端共享 epoch + 自动 seek | 等待页要求所有人同时在场；共享时钟让晚到者直接落到同一帧，实测误差 ≤0.3 s，且不需要任何人手动同步 |
+| 只看分流比例 | 外加播放头断言 | 比例可被预取刷高；播放头不动即为无效测量 |

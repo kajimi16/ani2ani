@@ -1,0 +1,22 @@
+{
+  "name": "ani2ani",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser-only P2P screening stack for campus LAN (HLS + WebRTC + local tracker/STUN)",
+  "type": "module",
+  "scripts": {
+    "build": "bash scripts/build-player.sh",
+    "start": "bash scripts/start.sh",
+    "stop": "bash scripts/stop.sh",
+    "check": "bash scripts/check-stack.sh"
+  },
+  "dependencies": {
+    "bittorrent-tracker": "^11.2.3",
+    "hls.js": "^1.7.4",
+    "p2p-media-loader-hlsjs": "^4.0.0",
+    "plyr": "^3.8.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
