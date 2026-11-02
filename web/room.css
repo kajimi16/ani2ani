@@ -1708,8 +1708,11 @@ body.studio .dm-open-btn {
     background: rgba(10, 10, 14, 0.82);
   }
 
+  /* Volume stays on phones: the composer is behind a button, so there is room,
+     and hiding it left no way to set the level before unmuting. */
   body.studio .plyr__controls .plyr__volume {
-    display: none;
+    flex: 0 1 96px;
+    min-width: 72px;
   }
 }
 
