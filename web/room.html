@@ -291,9 +291,13 @@
 
         const busy = ["uploading", "transcoding", "queued"].includes(room.status);
         uploadButton.disabled = busy;
-        startButton.disabled = room.status !== "ready";
-        startDelayButton.disabled = room.status !== "ready";
+        // Ready to begin, already running (restart), or finished (replay): all
+        // three can start a screening; the button just says which it is.
+        const canStart = ["ready", "live", "ended"].includes(room.status);
+        startButton.disabled = !canStart;
+        startDelayButton.disabled = !canStart;
         endButton.disabled = room.status !== "live";
+        startButton.textContent = room.status === "live" || room.status === "ended" ? "重新放映" : "开始放映";
         removeButton.disabled = busy;
 
         if (room.status === "queued") {
@@ -402,6 +406,8 @@
 
       document.addEventListener("room-state", (event) => render(event.detail));
       document.addEventListener("screening-ended", () => setVeil(true, "放映结束", "谢谢观看。"));
+      // Replay: whatever the room status did, the picture is running again.
+      document.addEventListener("screening-restarted", () => setVeil(false));
 
       /* -------------------------------------------------- host & sync UI */
 
@@ -843,6 +849,7 @@
         } catch (error) {
           ownerError.textContent = `开始失败：${error.message}`;
         } finally {
+          window.__screening?.refreshRoom?.();
           refreshRoom();
         }
       }
@@ -852,6 +859,7 @@
 
       endButton.addEventListener("click", async () => {
         await ownerRequest("/end", { method: "POST" }).catch(() => {});
+        window.__screening?.refreshRoom?.();
         refreshRoom();
       });
 
@@ -949,7 +957,28 @@
         composerInput.addEventListener("focus", () => document.querySelector(".plyr")?.classList.add("fs-typing"));
         composerInput.addEventListener("blur", () => document.querySelector(".plyr")?.classList.remove("fs-typing"));
 
-        controls.append(toggle, composer);
+        // Phones have no chat column beside the picture, so the composer needs a
+        // door inside the player — but a permanent input row would eat most of a
+        // 390px-wide screen. A small button reveals it on demand.
+        const dmOpen = document.createElement("button");
+        dmOpen.type = "button";
+        dmOpen.className = "plyr__controls__item plyr__control dm-open-btn";
+        dmOpen.title = "发弹幕";
+        dmOpen.setAttribute("aria-label", "发弹幕");
+        dmOpen.textContent = "发弹幕";
+        dmOpen.addEventListener("click", () => {
+          const container = document.querySelector(".plyr");
+          container.classList.toggle("fs-dm-open");
+          if (container.classList.contains("fs-dm-open")) composerInput.focus();
+        });
+        composerInput.addEventListener("blur", (event) => {
+          // Tapping 发送 moves focus out of the input; the row must stay until the
+          // click has landed, or the button vanishes under the finger.
+          if (composer.contains(event.relatedTarget)) return;
+          document.querySelector(".plyr")?.classList.remove("fs-dm-open");
+        });
+
+        controls.append(toggle, dmOpen, composer);
 
         // --- density curve above the progress rail
         const progress = document.querySelector(".plyr__progress__container");

@@ -456,12 +456,21 @@ async function refreshRoom() {
     const startedAt = roomState?.startedAt ?? null;
     if (startedAt && startedAt !== lastStartedAt) {
       lastStartedAt = startedAt;
-      if (isHost()) {
-        seekTo(0);
-        video.play().catch(() => {});
-      } else {
-        initialAligned = false;
-      }
+      // A new screening — including a replay after the film ended. Everybody goes
+      // back to the start, and `ended` has to be cleared here: the sync loop is
+      // gated on it, so a follower who reached the end would otherwise stay frozen
+      // there while the host restarts from zero.
+      ended = false;
+      userPaused = false;
+      syncMode = "sync";
+      statusEl.dataset.phase = "playing";
+      seekTo(0);
+      video.play().catch(() => {});
+      if (!isHost()) initialAligned = false;
+      document.dispatchEvent(new CustomEvent("sync-mode", { detail: { mode: syncMode } }));
+      // The room may have stayed "live" the whole time (the film simply finished),
+      // so a status transition is not a reliable signal that the veil should go.
+      document.dispatchEvent(new CustomEvent("screening-restarted"));
     }
 
     if (hostPeerId !== previousHost) {

@@ -1270,7 +1270,9 @@ async function handle(req, res) {
       if (!isOwner(req, room, body) && !senderHoldsHostSeat(req, room, body)) {
         return json(res, 403, { ok: false, error: "only the room owner or its host can start" });
       }
-      if (room.status !== "ready" && room.status !== "live") {
+      // "ended" is allowed on purpose: finishing a screening is not the end of the
+      // room, and the host replays by starting again (everyone re-anchors to 0).
+      if (!["ready", "live", "ended"].includes(room.status)) {
         return json(res, 409, { ok: false, error: `room is ${room.status}, not ready` });
       }
       // `delaySec` lets the owner schedule a start a little in the future so late
