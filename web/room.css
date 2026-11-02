@@ -1,0 +1,1154 @@
+/* Room page skin: three-column streaming layout, in this project's own palette.
+ *
+ * Not a colour copy of any streaming site: the accent is the portal's pink,
+ * and the page ships both a light and a dark theme. Geometry is the part worth
+ * keeping (65% live area / fixed chat column, white cards on a tinted backdrop),
+ * and it is identical in both themes.
+ *
+ * Geometry at a 1560 viewport:
+ *   header     56px sticky
+ *   source bar 44px
+ *   shell      1560 max, main column flexible, chat 360px sticky
+ */
+
+body.studio {
+  --accent: #fb7299;
+  --accent-strong: #ff85a9;
+  --accent-deep: #d6486e;
+  --accent-soft: rgba(251, 114, 153, 0.14);
+  --accent-line: rgba(251, 114, 153, 0.42);
+  --danger: #d92d20;
+  --d-max: 1560px;
+
+  margin: 0;
+  padding: 0 0 40px;
+  color: var(--ink);
+  font-family: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: light;
+  background-color: var(--page);
+  background-image: var(--page-image);
+  background-attachment: fixed;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Light theme (default before JS runs; the toggle sets data-theme explicitly). */
+body.studio,
+body.studio[data-theme="light"] {
+  --page: #f4f5f7;
+  --page-image:
+    radial-gradient(55% 38% at 12% -6%, rgba(251, 114, 153, 0.16), transparent 62%),
+    radial-gradient(45% 35% at 94% 4%, rgba(126, 116, 255, 0.12), transparent 60%),
+    linear-gradient(180deg, #f7f8fa 0%, #eef0f3 100%);
+  --card: #ffffff;
+  --card-shadow: 0 10px 30px rgba(23, 26, 41, 0.08);
+  --ink: #1b1d22;
+  --ink-dim: #424952;
+  --muted: #6b7280;
+  --line: #eceef2;
+  --field: #f6f7f9;
+  --field-focus: #ffffff;
+  --bar: #ffffff;
+  --bar-ink: #1b1d22;
+  --bar-chip: #f1f2f5;
+  --bar-chip-ink: #5b626b;
+  --bar-line: #e8eaef;
+  --on-accent: #ffffff;
+  --footer-ink: #6b7280;
+}
+
+html[data-theme="dark"] body.studio {
+  color-scheme: dark;
+  --page: #101114;
+  --page-image:
+    radial-gradient(55% 38% at 12% -6%, rgba(251, 114, 153, 0.18), transparent 62%),
+    radial-gradient(45% 35% at 94% 4%, rgba(126, 116, 255, 0.14), transparent 60%),
+    linear-gradient(180deg, #14151a 0%, #0e0f12 100%);
+  --card: #1b1c20;
+  --card-shadow: 0 12px 34px rgba(0, 0, 0, 0.42);
+  --ink: #e8e9ec;
+  --ink-dim: #b6bbc3;
+  --muted: #858b94;
+  --line: rgba(255, 255, 255, 0.08);
+  --field: #232428;
+  --field-focus: #27282d;
+  --bar: #17181b;
+  --bar-ink: #e8e9ec;
+  --bar-chip: rgba(255, 255, 255, 0.07);
+  --bar-chip-ink: rgba(255, 255, 255, 0.72);
+  --bar-line: rgba(255, 255, 255, 0.07);
+  --on-accent: #ffffff;
+  --footer-ink: #7c828b;
+}
+
+body.studio a {
+  color: inherit;
+  text-decoration: none;
+}
+
+body.studio button {
+  font: inherit;
+  cursor: pointer;
+}
+
+body.studio :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.d-ico {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* ----------------------------------------------------------------- header */
+
+.d-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+.d-header-inner {
+  max-width: var(--d-max);
+  height: 56px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.d-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+  flex: none;
+}
+
+.d-logo-mark {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--accent);
+}
+
+.d-logo-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0;
+  height: 0;
+  border-left: 8px solid #fff;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  transform: translateX(1px);
+}
+
+.d-nav {
+  display: flex;
+  gap: 18px;
+  flex: none;
+}
+
+.d-nav a {
+  font-size: 15px;
+  color: var(--ink-dim);
+  line-height: 56px;
+  transition: color 0.15s;
+}
+
+.d-nav a:hover {
+  color: var(--ink);
+}
+
+.d-nav a[aria-current="page"] {
+  color: var(--accent-deep);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+html[data-theme="dark"] body.studio .d-nav a[aria-current="page"] {
+  color: var(--accent);
+}
+
+.d-search {
+  flex: 1 1 auto;
+  max-width: 340px;
+  margin: 0 auto;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--field);
+  border: 1px solid transparent;
+  color: var(--muted);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.d-search:focus-within {
+  background: var(--field-focus);
+  border-color: var(--accent-line);
+}
+
+.d-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.d-search input::placeholder {
+  color: var(--muted);
+}
+
+.d-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.d-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-dim);
+  transition: background 0.15s, color 0.15s;
+}
+
+.d-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.d-icon:hover {
+  background: var(--field);
+  color: var(--accent-deep);
+}
+
+html[data-theme="dark"] body.studio .d-icon:hover {
+  color: var(--accent);
+}
+
+.d-primary {
+  height: 34px;
+  margin-left: 6px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.d-primary:hover {
+  background: var(--accent-strong);
+}
+
+/* ------------------------------------------------------------- source bar */
+
+.d-subbar {
+  background: var(--bar);
+  border-bottom: 1px solid var(--bar-line);
+}
+
+.d-subbar-inner {
+  max-width: var(--d-max);
+  margin: 0 auto;
+  padding: 0 20px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.d-subbar-inner::-webkit-scrollbar {
+  display: none;
+}
+
+.d-src-tab {
+  flex: none;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--bar-ink);
+  font-weight: 600;
+}
+
+.d-src-tab.is-ghost {
+  color: var(--bar-chip-ink);
+  font-weight: 400;
+}
+
+.d-subbar-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--bar-line);
+  margin: 0 6px;
+}
+
+/* Angled chips: the cut corner is the one borrowed graphic motif. */
+.d-src {
+  flex: none;
+  padding: 5px 16px;
+  border: 0;
+  font-size: 12px;
+  color: var(--bar-chip-ink);
+  background: var(--bar-chip);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  transition: background 0.15s, color 0.15s;
+}
+
+.d-src:hover {
+  color: var(--bar-ink);
+}
+
+.d-src.is-active {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+.d-subbar-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ shell */
+
+.d-shell {
+  max-width: var(--d-max);
+  margin: 14px auto 0;
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 14px;
+  align-items: start;
+}
+
+.d-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.d-card {
+  background: var(--card);
+  border-radius: 12px;
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------- room bar */
+
+.d-roombar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.d-avatar {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.d-roominfo {
+  min-width: 0;
+  flex: 1;
+}
+
+.d-roominfo h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-roommeta {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ stage */
+
+.d-stage-card {
+  padding: 10px;
+}
+
+.d-stage {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0b0b0e;
+}
+
+body.studio stage-frame {
+  border-radius: 0;
+}
+
+#veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+  color: #fff;
+  background: radial-gradient(70% 70% at 50% 45%, rgba(16, 17, 20, 0.7), rgba(6, 6, 8, 0.92));
+}
+
+#veil h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+#veil p {
+  margin: 0;
+  max-width: 36ch;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+#veil::before {
+  background: var(--accent);
+}
+
+.sync-bar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(18, 19, 23, 0.92);
+  color: #fff;
+  font-size: 13px;
+  backdrop-filter: blur(6px);
+}
+
+.sync-bar[hidden] {
+  display: none;
+}
+
+.sync-bar button {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+}
+
+.sync-bar button.quiet {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+/* ------------------------------------------------------------- host stats */
+
+body.studio .stat-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 10px 2px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  max-width: none;
+}
+
+body.studio .stat-line[hidden] {
+  display: none;
+}
+
+body.studio .stat-line dt {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+body.studio .stat-line dd {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- actions */
+
+.d-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px 2px;
+  flex-wrap: wrap;
+}
+
+.d-act {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+
+.d-act:hover {
+  border-color: var(--accent-line);
+  color: var(--accent-deep);
+}
+
+html[data-theme="dark"] body.studio .d-act:hover {
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- related */
+
+.d-related {
+  padding: 14px 16px 16px;
+}
+
+.d-sec-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.d-sec-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.d-sec-head a {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.d-sec-head a:hover {
+  color: var(--accent-deep);
+}
+
+.d-rel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.d-rel {
+  display: block;
+  min-width: 0;
+}
+
+.d-rel-cover {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--field);
+}
+
+.d-rel-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.d-rel-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+}
+
+.d-rel-title {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-rel:hover .d-rel-title {
+  color: var(--accent-deep);
+}
+
+html[data-theme="dark"] body.studio .d-rel:hover .d-rel-title {
+  color: var(--accent);
+}
+
+.d-rel-meta {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------- chat */
+
+.d-chat {
+  position: sticky;
+  top: 114px;
+  height: calc(100vh - 130px);
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-radius: 12px;
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+
+.d-chat-head {
+  display: flex;
+  gap: 4px;
+  padding: 10px 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.d-tab {
+  position: relative;
+  padding: 8px 12px 10px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.d-tab.is-active {
+  color: var(--accent-deep);
+  font-weight: 600;
+}
+
+html[data-theme="dark"] body.studio .d-tab.is-active {
+  color: var(--accent);
+}
+
+.d-tab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.d-notice {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+html[data-theme="dark"] body.studio .d-notice {
+  color: var(--ink);
+}
+
+.d-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.d-pane[hidden] {
+  display: none;
+}
+
+body.studio .danmaku-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  margin: 0;
+}
+
+body.studio .danmaku-panel h2 {
+  display: none;
+}
+
+body.studio .danmaku-panel ul {
+  flex: 1;
+  min-height: 0;
+  /* app.css caps this list at 14rem; in a full-height chat column it must fill. */
+  max-height: none;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scrollbar-width: thin;
+}
+
+body.studio .danmaku-row {
+  display: block;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+body.studio .danmaku-who {
+  color: var(--accent-deep);
+  margin-right: 6px;
+}
+
+html[data-theme="dark"] body.studio .danmaku-who {
+  color: var(--accent);
+}
+
+body.studio .danmaku-text {
+  color: var(--ink);
+}
+
+body.studio .people {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 0;
+  margin: 0;
+}
+
+body.studio .people[hidden] {
+  display: none;
+}
+
+body.studio .people h2 {
+  display: none;
+}
+
+body.studio .people ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+body.studio .people li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+body.studio .people li .tag {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  font-size: 11px;
+  font-style: normal;
+}
+
+html[data-theme="dark"] body.studio .people li .tag {
+  color: var(--accent);
+}
+
+.d-empty {
+  margin: 0;
+  padding: 18px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.d-empty[hidden] {
+  display: none;
+}
+
+.d-chat-input {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.d-chat-input input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.d-chat-input input:focus {
+  border-color: var(--accent-line);
+  background: var(--field-focus);
+}
+
+.d-chat-input button {
+  flex: none;
+  height: 34px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.d-chat-input button:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.d-chat-input button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.d-chat-status {
+  margin: 0;
+  padding: 0 12px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* The status line is only meaningful while disconnected. */
+.d-chat-status:empty {
+  display: none;
+}
+
+/* ---------------------------------------------------------- owner / lock */
+
+body.studio owner-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--card);
+  border-radius: 12px;
+  box-shadow: var(--card-shadow);
+}
+
+body.studio owner-panel[hidden] {
+  display: none;
+}
+
+body.studio owner-panel h2 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+body.studio owner-panel .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+body.studio owner-panel .spacer {
+  flex: 1;
+}
+
+body.studio owner-panel button {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+body.studio owner-panel button:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  color: var(--accent-deep);
+}
+
+html[data-theme="dark"] body.studio owner-panel button:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+body.studio owner-panel button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+body.studio owner-panel #start:not(:disabled),
+body.studio owner-panel #startDelay:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+body.studio owner-panel button.danger {
+  color: var(--danger);
+  border-color: rgba(217, 45, 32, 0.28);
+}
+
+body.studio owner-panel button.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+body.studio owner-panel input[type="file"] {
+  flex: 1 1 14rem;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+body.studio owner-panel input[type="file"]::file-selector-button {
+  height: 30px;
+  margin-right: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--field);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+body.studio owner-panel .progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--field);
+  overflow: hidden;
+}
+
+body.studio owner-panel .progress > i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+body.studio owner-panel .hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* The upload line is a live status, not a caption: no text, no space. */
+body.studio owner-panel .hint:empty {
+  display: none;
+}
+
+body.studio owner-panel .error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+body.studio owner-panel .error:empty {
+  display: none;
+}
+
+body.studio .lock {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: rgba(12, 12, 16, 0.82);
+  backdrop-filter: blur(4px);
+  color: #fff;
+}
+
+body.studio .lock[hidden] {
+  display: none;
+}
+
+body.studio .lock h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+body.studio .lock .hint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+}
+
+body.studio .lock .field {
+  display: flex;
+  gap: 8px;
+}
+
+body.studio .lock input {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+body.studio .lock button {
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 14px;
+}
+
+body.studio .lock .error {
+  margin: 0;
+  color: #ffb4a2;
+  font-size: 13px;
+}
+
+/* Overlays that used to sit in the page flow, hidden while locked. */
+body.locked .d-stage-card,
+body.locked .d-related,
+body.locked owner-panel {
+  display: none;
+}
+
+/* ----------------------------------------------------------------- footer */
+
+.d-footer {
+  max-width: var(--d-max);
+  margin: 18px auto 0;
+  padding: 0 20px;
+  font-size: 12px;
+  color: var(--footer-ink);
+}
+
+.d-footer p {
+  margin: 0;
+}
+
+/* ------------------------------------------------------------- responsive */
+
+@media (max-width: 1180px) {
+  .d-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .d-chat {
+    position: static;
+    height: 520px;
+  }
+}
+
+@media (max-width: 860px) {
+  .d-nav,
+  .d-search {
+    display: none;
+  }
+
+  .d-roombar {
+    flex-wrap: wrap;
+  }
+
+  .d-rel-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .d-header-inner,
+  .d-subbar-inner,
+  .d-shell,
+  .d-footer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .d-chat {
+    height: 440px;
+  }
+}
+
+/* ------------------------------------------------------------ theme toggle */
+
+#themeToggle .d-sun {
+  display: none;
+}
+
+html[data-theme="dark"] body.studio #themeToggle .d-sun {
+  display: block;
+}
+
+html[data-theme="dark"] body.studio #themeToggle .d-moon {
+  display: none;
+}

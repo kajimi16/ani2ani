@@ -4,87 +4,114 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>放映会</title>
+    <script>
+      // Runs before first paint: the theme lives on <html> so the page never
+      // flashes the wrong palette while the module script is still loading.
+      try {
+        const saved = localStorage.getItem("site-theme") || localStorage.getItem("studio-theme");
+        const system = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = saved === "dark" || saved === "light" ? saved : system;
+      } catch {}
+    </script>
     <link rel="stylesheet" href="/vendor/plyr.css" />
     <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/room.css" />
   </head>
-  <body>
-    <page-grid>
-      <site-nav>
-        <ul>
-          <li><a href="/">放映会</a></li>
-          <li><a href="/" id="navBack">房间</a></li>
-          <li><a href="/" id="navStatus">…</a></li>
-        </ul>
-      </site-nav>
+  <body class="studio">
+    <header class="d-header">
+      <div class="d-header-inner">
+        <a class="d-logo" href="/"><span class="d-logo-mark" aria-hidden="true"></span><span>放映会</span></a>
+        <nav class="d-nav" aria-label="主导航">
+          <a href="/">首页</a>
+          <a href="/" aria-current="page">房间</a>
+        </nav>
+        <form class="d-search" id="searchForm" role="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="d-ico">
+            <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+            <path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+          <input id="searchInput" type="search" placeholder="搜索房间" aria-label="搜索房间" />
+        </form>
+        <div class="d-icons">
+          <button class="d-icon" id="themeToggle" type="button" title="切换夜间模式" aria-label="切换夜间模式">
+            <svg class="d-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.2A8.2 8.2 0 0 1 9.8 4a8.4 8.4 0 1 0 10.2 10.2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /></svg>
+            <svg class="d-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
+          </button>
+          <button class="d-icon" id="reload" type="button" title="重新载入" aria-label="重新载入">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 1 2.6 5.9M4 18v-5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </button>
+          <button class="d-icon" id="copyLink" type="button" title="复制链接" aria-label="复制链接">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l6-6M8 12l-2 2a3.5 3.5 0 0 0 5 5l2-2M16 12l2-2a3.5 3.5 0 0 0-5-5l-2 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
+          </button>
+          <a class="d-primary" href="/">我要开播</a>
+        </div>
+      </div>
+    </header>
 
-      <site-main>
-        <div class="row" style="justify-content: space-between; align-items: baseline">
-          <div>
+    <nav class="d-subbar" aria-label="信号源">
+      <div class="d-subbar-inner">
+        <span class="d-src-tab">直播</span>
+        <span class="d-src-tab is-ghost">回放</span>
+        <span class="d-src-tab is-ghost">预约</span>
+        <span class="d-subbar-sep" aria-hidden="true"></span>
+        <button class="d-src is-active" type="button">主线路</button>
+        <span class="d-subbar-status" id="navStatus">…</span>
+      </div>
+    </nav>
+
+    <div class="d-shell">
+      <main class="d-col">
+        <section class="d-card d-roombar">
+          <span class="d-avatar" aria-hidden="true">放</span>
+          <div class="d-roominfo">
             <h1 id="roomTitle">…</h1>
-            <p class="entry-meta" id="roomSub"></p>
+            <p class="d-roommeta" id="roomSub"></p>
           </div>
-          <button class="quiet" id="copyLink" type="button">复制链接</button>
-        </div>
-
-        <stage-frame>
-          <video id="video" playsinline autoplay muted></video>
-          <div id="veil">
-            <h3 id="veilTitle">等待房主开始</h3>
-            <p id="veilText">页面开着就行，房主开始放映时这里会自动从同一帧播放。</p>
-          </div>
-        </stage-frame>
-
-        <div class="danmaku-bar">
-          <input id="danmakuInput" type="text" maxlength="120" placeholder="发一条弹幕（Enter 发送）" aria-label="弹幕内容" />
-          <button id="danmakuSend" type="button">发送</button>
-          <span class="hint" id="danmakuStatus">连接中…</span>
-        </div>
-
-        <div class="sync-bar" id="syncBar" hidden>
-          <span id="syncBarText">与房主不同步</span>
-          <button id="syncBarAction" type="button">对齐到房主</button>
-          <button class="quiet" id="syncBarDismiss" type="button">留在这里</button>
-        </div>
-
-        <!-- Host-only diagnostics: ratios, drift and buffer targets are operating
-             numbers, not something a viewer should have to read. Hidden by default
-             so viewers never see them even before the first host check runs. -->
-        <dl class="stat-line" id="statLine" hidden>
-          <div><dt>P2P</dt><dd id="p2p">0.0%</dd></div>
-          <div><dt>观众</dt><dd id="peers">0</dd></div>
-          <div><dt>下行</dt><dd id="down">0 / 0 MiB</dd></div>
-          <div><dt>上行</dt><dd id="up">0.0 MiB</dd></div>
-          <div><dt>分片</dt><dd id="segments">0 / 0</dd></div>
-          <div><dt>同步</dt><dd id="sync">等待房主开始</dd></div>
-          <div><dt>角色</dt><dd id="role">—</dd></div>
-        </dl>
-
-        <p id="status" class="sr-only"></p>
-
-        <section class="danmaku-panel" id="danmakuPanel">
-          <h2>弹幕</h2>
-          <ul id="danmakuList"></ul>
         </section>
 
-        <section class="people" id="people" hidden>
-          <h2>房间里</h2>
-          <ul id="peopleList"></ul>
-          <div class="row" id="hostControls" hidden>
-            <span class="hint">把房主转交给</span>
-            <select id="hostTransfer"></select>
-            <button id="hostTransferGo" type="button">转交</button>
+        <section class="d-card d-stage-card">
+          <div class="d-stage">
+            <stage-frame>
+              <video id="video" playsinline autoplay muted></video>
+              <div id="veil">
+                <h3 id="veilTitle">等待房主开始</h3>
+                <p id="veilText">页面开着就行，房主开始放映时这里会自动从同一帧播放。</p>
+              </div>
+            </stage-frame>
+
+            <div class="sync-bar" id="syncBar" hidden>
+              <span id="syncBarText">与房主不同步</span>
+              <button id="syncBarAction" type="button">对齐到房主</button>
+              <button class="quiet" id="syncBarDismiss" type="button">留在这里</button>
+            </div>
           </div>
-          <p class="hint" id="hostNote" hidden>你是房主：离开前请先把房主转交给别人。</p>
+
+          <!-- Host-only diagnostics: ratios, drift and buffer targets are operating
+               numbers, not something a viewer should have to read. Hidden by default
+               so viewers never see them even before the first host check runs. -->
+          <dl class="stat-line" id="statLine" hidden>
+            <div><dt>P2P</dt><dd id="p2p">0.0%</dd></div>
+            <div><dt>观众</dt><dd id="peers">0</dd></div>
+            <div><dt>下行</dt><dd id="down">0 / 0 MiB</dd></div>
+            <div><dt>上行</dt><dd id="up">0.0 MiB</dd></div>
+            <div><dt>分片</dt><dd id="segments">0 / 0</dd></div>
+            <div><dt>同步</dt><dd id="sync">等待房主开始</dd></div>
+            <div><dt>角色</dt><dd id="role">—</dd></div>
+          </dl>
+
+          <div class="d-actions">
+            <button class="d-act" type="button" data-copy-link>复制链接</button>
+            <button class="d-act" type="button" data-reload>重新载入</button>
+            <a class="d-act" href="/">回到首页</a>
+          </div>
         </section>
 
-        <section class="lock" id="lock" hidden>
-          <h2 id="lockTitle">私密房间</h2>
-          <p class="hint" id="lockHint">这个房间是私密的，输入房主给的密码才能进。</p>
-          <div class="field">
-            <input id="lockPassword" type="password" maxlength="32" placeholder="房间密码" aria-label="房间密码" />
-            <button id="lockSubmit" type="button">进入</button>
+        <section class="d-card d-related">
+          <div class="d-sec-head">
+            <h2>正在放映</h2>
+            <a href="/">全部 <span aria-hidden="true">›</span></a>
           </div>
-          <p class="error" id="lockError" hidden></p>
+          <div class="d-rel-grid" id="related"></div>
         </section>
 
         <owner-panel id="owner" hidden>
@@ -95,7 +122,7 @@
             <button id="upload" type="button">上传并处理</button>
           </div>
           <div class="progress"><i id="uploadBar"></i></div>
-          <p class="hint" id="uploadHint">支持 mkv / mp4 / mov，处理时压到 720p、约 2.5 Mbps。</p>
+          <p class="hint" id="uploadHint"></p>
 
           <div class="row">
             <button id="start" type="button" disabled>开始放映</button>
@@ -107,17 +134,54 @@
           <p class="hint" id="ownerHint"></p>
           <p class="error" id="ownerError"></p>
         </owner-panel>
-      </site-main>
+      </main>
 
-      <site-footer>
-        <div class="attribution">
-          <p id="footerMeta"></p>
+      <aside class="d-chat" aria-label="弹幕">
+        <div class="d-chat-head">
+          <button class="d-tab is-active" type="button" data-tab="danmaku">弹幕</button>
+          <button class="d-tab" type="button" data-tab="people">在线</button>
         </div>
-        <ul class="icon-links">
-          <li><button class="icon-button" id="reload" type="button" title="重新载入" aria-label="重新载入">↻</button></li>
-        </ul>
-      </site-footer>
-    </page-grid>
+        <p class="d-notice">文明观影，请勿剧透</p>
+
+        <div class="d-pane" data-pane="danmaku">
+          <section class="danmaku-panel" id="danmakuPanel">
+            <ul id="danmakuList"></ul>
+          </section>
+        </div>
+
+        <div class="d-pane" data-pane="people" hidden>
+          <section class="people" id="people" hidden>
+            <ul id="peopleList"></ul>
+            <div class="row" id="hostControls" hidden>
+              <span class="hint">把房主转交给</span>
+              <select id="hostTransfer"></select>
+              <button id="hostTransferGo" type="button">转交</button>
+            </div>
+            <p class="hint" id="hostNote" hidden>你是房主：离开前请先把房主转交给别人。</p>
+          </section>
+          <p class="d-empty" id="peopleEmpty" hidden>还没有人进来。</p>
+        </div>
+
+        <div class="d-chat-input">
+          <input id="danmakuInput" type="text" maxlength="120" placeholder="发一条弹幕" aria-label="弹幕内容" />
+          <button id="danmakuSend" type="button">发送</button>
+        </div>
+        <p class="d-chat-status" id="danmakuStatus">连接中…</p>
+      </aside>
+    </div>
+
+    <section class="lock" id="lock" hidden>
+      <h2 id="lockTitle">私密房间</h2>
+      <p class="hint" id="lockHint">这个房间是私密的，输入房主给的密码才能进。</p>
+      <div class="field">
+        <input id="lockPassword" type="password" maxlength="32" placeholder="房间密码" aria-label="房间密码" />
+        <button id="lockSubmit" type="button">进入</button>
+      </div>
+      <p class="error" id="lockError" hidden></p>
+    </section>
+
+    <footer class="d-footer"><p id="footerMeta"></p></footer>
+    <p id="status" class="sr-only"></p>
 
     <script type="module" src="/player.js"></script>
     <script type="module">
@@ -645,6 +709,100 @@
         localStorage.removeItem(`room-token-${roomId}`);
         location.href = "/";
       });
+
+
+      /* ----------------------------------------------------------- 明暗主题 */
+
+      const themeToggle = document.getElementById("themeToggle");
+      const THEME_KEY = "site-theme";
+
+      function applyTheme(theme) {
+        document.documentElement.dataset.theme = theme;
+        const toDark = theme !== "dark";
+        const label = toDark ? "切换夜间模式" : "切换白天模式";
+        themeToggle.setAttribute("aria-label", label);
+        themeToggle.title = label;
+      }
+
+      applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+
+      themeToggle.addEventListener("click", () => {
+        const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+        applyTheme(next);
+        try {
+          localStorage.setItem(THEME_KEY, next);
+        } catch {
+          /* private mode: the choice just does not persist */
+        }
+      });
+
+      /* ------------------------------------------------------- 页面外壳行为 */
+
+      // Tabs swap two real panes: the danmaku stream and the people list.
+      const tabs = [...document.querySelectorAll(".d-tab")];
+      const panes = [...document.querySelectorAll(".d-pane")];
+      const peopleEmpty = document.getElementById("peopleEmpty");
+
+      function showPane(name) {
+        tabs.forEach((tab) => tab.classList.toggle("is-active", tab.dataset.tab === name));
+        panes.forEach((pane) => {
+          pane.hidden = pane.dataset.pane !== name;
+        });
+        if (name === "people") {
+          peopleEmpty.hidden = document.getElementById("peopleList").children.length > 0;
+        }
+      }
+
+      tabs.forEach((tab) => tab.addEventListener("click", () => showPane(tab.dataset.tab)));
+
+      // Header icons are the only real controls; the action chips delegate so
+      // there is one implementation of each.
+      document
+        .querySelector("[data-copy-link]")
+        .addEventListener("click", () => document.getElementById("copyLink").click());
+      document
+        .querySelector("[data-reload]")
+        .addEventListener("click", () => document.getElementById("reload").click());
+
+      // The search box belongs to the portal, not this page: hand the query over.
+      document.getElementById("searchForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const query = document.getElementById("searchInput").value.trim();
+        location.href = query ? `/?q=${encodeURIComponent(query)}` : "/";
+      });
+
+      // "正在放映" rail: other rooms, fetched once. It is decoration only if the
+      // server has nothing else to show, which is the honest empty state.
+      (async () => {
+        const grid = document.getElementById("related");
+        try {
+          const payload = await (await fetch("/api/rooms", { cache: "no-store" })).json();
+          const others = (payload.rooms ?? []).filter((room) => room.id !== roomId).slice(0, 3);
+          if (others.length === 0) {
+            grid.innerHTML = '<p class="d-empty">暂时没有别的房间。</p>';
+            return;
+          }
+          grid.innerHTML = others
+            .map((room) => {
+              // Titles and host names are user-supplied, and room ids come from the
+              // server: everything is escaped before it reaches innerHTML.
+              const cover = room.poster
+                ? `<img src="${escapeHtml(room.poster)}" alt="" loading="lazy" />`
+                : "";
+              const badge = room.status === "live" ? `${Number(room.viewers) || 0} 人在看` : "待开播";
+              const title = escapeHtml(room.title || "未命名放映");
+              const host = room.hostName ? `房主 ${escapeHtml(room.hostName)}` : "暂无房主";
+              return `<a class="d-rel" href="/r/${escapeHtml(room.id)}">
+                <div class="d-rel-cover">${cover}<span class="d-rel-badge">${badge}</span></div>
+                <p class="d-rel-title">${title}</p>
+                <p class="d-rel-meta">${host}</p>
+              </a>`;
+            })
+            .join("");
+        } catch {
+          grid.innerHTML = '<p class="d-empty">载入失败。</p>';
+        }
+      })();
     </script>
   </body>
 </html>

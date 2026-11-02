@@ -26,6 +26,8 @@ body.portal {
   --p-muted: #9499a0;
   --p-pink: #fb7299;
   --p-pink-strong: #ff85a9;
+  --p-pink-text: #fb7299;
+  --p-header: rgba(24, 25, 27, 0.92);
   --p-max: 1440px;
 
   /* app.css still supplies element-level defaults. Its `button`/`a` rules read
@@ -44,6 +46,24 @@ body.portal {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Light theme. The portal ships dark by default; the toggle in the header
+   flips it, and the choice is shared with the room page through `site-theme`. */
+html[data-theme="light"] body.portal {
+  color-scheme: light;
+  --p-bg: #f4f5f7;
+  --p-surface: #ffffff;
+  --p-surface-2: #f2f3f5;
+  --p-surface-3: #e8eaee;
+  --p-line: rgba(17, 24, 39, 0.08);
+  --p-line-strong: rgba(17, 24, 39, 0.16);
+  --p-text: #1b1d22;
+  --p-text-dim: #424952;
+  --p-muted: #626a76;
+  --p-pink-text: #c2185b;
+  --p-header: rgba(255, 255, 255, 0.92);
+  --foreground: var(--p-text);
 }
 
 body.portal a {
@@ -80,7 +100,7 @@ body.portal :focus-visible {
   inset: 0 0 auto 0;
   height: 60px;
   z-index: 50;
-  background: rgba(24, 25, 27, 0.92);
+  background: var(--p-header);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--p-line);
 }
@@ -151,7 +171,7 @@ body.portal :focus-visible {
 }
 
 .p-nav a[aria-current="page"] {
-  color: var(--p-pink);
+  color: var(--p-pink-text);
   font-weight: 600;
 }
 
@@ -294,7 +314,7 @@ body.portal :focus-visible {
 }
 
 .p-chip.is-active {
-  color: var(--p-pink);
+  color: var(--p-pink-text);
   background: rgba(251, 114, 153, 0.14);
   border-color: rgba(251, 114, 153, 0.45);
 }
@@ -414,7 +434,7 @@ body.portal :focus-visible {
 
 .p-focus-cta {
   margin-left: auto;
-  color: var(--p-pink);
+  color: var(--p-pink-text);
 }
 
 .p-empty-focus {
@@ -454,7 +474,7 @@ body.portal :focus-visible {
 }
 
 .p-more:hover {
-  color: var(--p-pink);
+  color: var(--p-pink-text);
 }
 
 .p-count {
@@ -620,7 +640,7 @@ body.portal :focus-visible {
 }
 
 .p-card:hover .p-card-title {
-  color: var(--p-pink);
+  color: var(--p-pink-text);
 }
 
 .p-card-up {
@@ -1381,4 +1401,43 @@ body.portal :focus-visible {
   .mg-toast {
     opacity: 1;
   }
+}
+
+/* ------------------------------------------------------------ theme toggle */
+
+.p-theme {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--p-text-dim);
+  transition: background 0.15s, color 0.15s;
+}
+
+.p-theme svg {
+  width: 18px;
+  height: 18px;
+}
+
+.p-theme:hover:not(:disabled) {
+  background: var(--p-surface-2);
+  border-color: transparent;
+  color: var(--p-pink);
+}
+
+/* Show the destination theme's icon. */
+.p-theme .p-sun {
+  display: none;
+}
+
+html[data-theme="dark"] body.portal .p-theme .p-sun {
+  display: block;
+}
+
+html[data-theme="dark"] body.portal .p-theme .p-moon {
+  display: none;
 }
