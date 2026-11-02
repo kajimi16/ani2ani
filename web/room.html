@@ -92,12 +92,14 @@
             </div>
 
             <p class="vote-toast" id="voteToast" hidden></p>
+          </div>
 
-            <div class="sync-bar" id="syncBar" hidden>
-              <span id="syncBarText">与房主不同步</span>
-              <button id="syncBarAction" type="button">对齐到房主</button>
-              <button class="quiet" id="syncBarDismiss" type="button">留在这里</button>
-            </div>
+          <!-- Outside the picture on purpose: a standing "you are out of sync"
+               banner must not cover the film it is talking about. -->
+          <div class="sync-bar" id="syncBar" hidden>
+            <span id="syncBarText">与房主不同步</span>
+            <button id="syncBarAction" type="button">对齐到房主</button>
+            <button class="quiet" id="syncBarDismiss" type="button">留在这里</button>
           </div>
 
           <!-- Host-only diagnostics: ratios, drift and buffer targets are operating
@@ -1026,10 +1028,11 @@
         voteToast.classList.toggle("is-pass", won);
         voteToast.classList.toggle("is-fail", !won);
         voteToast.hidden = false;
+        // Must outlast the CSS run (7 s) or the toast is cut off mid-flight.
         clearTimeout(toastTimer);
         toastTimer = setTimeout(() => {
           voteToast.hidden = true;
-        }, 4200);
+        }, 7400);
       }
 
       document.addEventListener("vote-state", (event) => showVote(event.detail));
