@@ -132,7 +132,7 @@
         <owner-panel id="owner" hidden>
           <h2>房主</h2>
 
-          <div class="row">
+          <div class="row" id="uploadRow">
             <input type="file" id="file" accept="video/*,.mkv,.mp4,.webm,.mov,.avi,.ts,.m4v" />
             <button id="upload" type="button">上传并处理</button>
           </div>
@@ -230,6 +230,7 @@
       const startDelayButton = document.getElementById("startDelay");
       const endButton = document.getElementById("end");
       const removeButton = document.getElementById("remove");
+      const uploadRow = document.getElementById("uploadRow");
       const ownerHint = document.getElementById("ownerHint");
       const ownerError = document.getElementById("ownerError");
 
@@ -281,11 +282,16 @@
           }
         }
 
-        if (!token) {
+        const iAmHostNow = window.__screening?.isHost?.() ?? false;
+        if (!token && !iAmHostNow) {
           ownerPanel.hidden = true;
           return;
         }
         ownerPanel.hidden = false;
+        // Upload and delete stay owner-only: a host who arrived by vote runs the
+        // screening, but does not own the room's files.
+        uploadRow.hidden = !token;
+        removeButton.hidden = !token;
 
         const busy = ["uploading", "transcoding", "queued"].includes(room.status);
         uploadButton.disabled = busy;
@@ -421,10 +427,20 @@
       // broken stream. The player only emits these on a transition, so the note
       // is not re-rendered every poll.
       const pauseNote = document.getElementById("pauseNote");
+      let pauseNoteTimer = null;
+
       document.addEventListener("host-paused", () => {
         pauseNote.hidden = false;
+        clearTimeout(pauseNoteTimer);
+        // It is a nudge, not a status badge: three seconds is enough to explain
+        // why the picture stopped.
+        pauseNoteTimer = setTimeout(() => {
+          pauseNote.hidden = true;
+        }, 3000);
       });
+
       document.addEventListener("host-resumed", () => {
+        clearTimeout(pauseNoteTimer);
         pauseNote.hidden = true;
       });
 
@@ -479,11 +495,13 @@
         // without anyone agreeing.
         if (claiming || Date.now() < claimCooldownUntil) return;
         const unassigned = !room.hostPeerId;
-        const leaderless = Boolean(room.hostPeerId) && room.hostAway;
-        if (!unassigned && !leaderless) return;
+        // Only a room that has never had a host is claimed automatically. Taking
+        // back a seat whose host is merely "away" is what undid every transfer:
+        // the new host needs a couple of seconds to report, during which the old
+        // token holder grabbed the seat back. A vacant seat is now filled by a
+        // vote, or by an explicit hand-over.
+        if (!unassigned) return;
         if (!token) return;
-        myPeerId = window.__screening?.stats().peerId ?? myPeerId;
-        if (leaderless && myPeerId === room.hostPeerId) return;
         const me = window.__screening;
         if (!me) return;
         myPeerId = me.stats().peerId;
@@ -544,7 +562,9 @@
 
         // Only the token holder can hand the room over; anyone can take an empty
         // seat, which is what keeps a screening alive after a crashed host.
-        hostControls.hidden = !owned || people.length === 0;
+        // A host elected by vote never had the owner token; the transfer control
+        // must still be theirs.
+        hostControls.hidden = !(owned || iAmHost) || people.length === 0;
         hostNote.hidden = !iAmHost || people.length < 2;
         hostTransfer.innerHTML = people
           .filter((person) => !person.isHost)
@@ -554,8 +574,9 @@
 
         // Poll fallback for the vote: the socket carries the live updates, but a
         // client that reconnects (or joined mid-vote) learns the state here.
-        const canApply = Boolean(room.hostAway) && !iAmHost && !room.vote;
-        voteStart.hidden = !canApply;
+        // The button is permanent; it is only disabled while a vote is running.
+        voteStart.hidden = false;
+        voteStart.disabled = Boolean(room.vote);
         if (room.vote) showVote(room.vote);
         else if (voteShownId && votedId !== voteShownId) hideVote();
 
@@ -570,8 +591,8 @@
         if (!target) return;
         await fetch(`/api/rooms/${roomId}/host`, {
           method: "POST",
-          headers: { "content-type": "application/json", "x-room-token": token },
-          body: JSON.stringify({ peerId: target }),
+          headers: { "content-type": "application/json", "x-room-token": token, "x-viewer-id": viewerId ?? "" },
+          body: JSON.stringify({ peerId: target, viewerId }),
         }).catch(() => {});
         refreshRoom();
       });
@@ -660,7 +681,7 @@
       function ownerRequest(path, options = {}) {
         return fetch(`/api/rooms/${roomId}${path}`, {
           ...options,
-          headers: { ...(options.headers ?? {}), "x-room-token": token },
+          headers: { ...(options.headers ?? {}), "x-room-token": token, "x-viewer-id": viewerId ?? "" },
         });
       }
 

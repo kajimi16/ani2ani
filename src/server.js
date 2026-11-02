@@ -561,6 +561,23 @@ function voteKey(person) {
   return person.viewerId || `peer:${person.peerId}`;
 }
 
+/**
+ * Does this request come from the peer currently holding the host seat?
+ *
+ * Identity is the viewerId, which is never published in the participant list: a
+ * host elected by a vote has no ownerToken, and a guest on a phone has none
+ * either, yet both must be able to run the room they were given.
+ */
+function senderHoldsHostSeat(req, room, body) {
+  const viewerId = String(body?.viewerId ?? req.headers["x-viewer-id"] ?? "");
+  if (!viewerId) return false;
+  const hostEntry = [...clients.values()].find(
+    (entry) => entry.peerId === room.hostPeerId && Date.now() - entry.lastSeen < LIVE_WINDOW_MS,
+  );
+  if (!hostEntry) return false;
+  return (hostEntry.viewerId || `peer:${hostEntry.peerId}`) === viewerId;
+}
+
 function roomView(room) {
   if (!room) return null;
   // Same stripping as the store's listing: the owner token is a capability, and
@@ -570,12 +587,15 @@ function roomView(room) {
   const hostPresent = people.some((p) => p.isHost);
   return {
     ...rest,
+    // viewerId is a capability: the sitting host proves who it is with it when
+    // handing the seat over, and a voted-in host has no ownerToken at all. Never
+    // publish it.
+    participants: people.map(({ viewerId, ...rest }) => rest),
     mediaBase: room.status === "live" || room.status === "ready" ? roomMediaBase(room) : null,
     // Cover for the portal. Null until a transcode has produced one, so the card
     // can render a plain block instead of a broken image.
     poster: fs.existsSync(posterPath(room.id)) ? `/media/${room.id}/poster.jpg` : null,
     viewers: people.length,
-    participants: people,
     // `hostAway` is what lets the UI say "房主已离开" instead of silently drifting
     // once the leader's reports stop arriving.
     hostAway: Boolean(room.hostPeerId) && !hostPresent,
@@ -1098,13 +1118,16 @@ async function handle(req, res) {
     if (rest === "/vote" && req.method === "POST") {
       const body = await readJson(req).catch(() => ({}));
       if (room.vote) return json(res, 409, { ok: false, error: "已经有一个投票在进行" });
-      if (!hostIsAway(room)) return json(res, 409, { ok: false, error: "房主还在房间里" });
 
       const people = participants(room.id, room.hostPeerId);
       const me = people.find(
         (person) => person.peerId === body.peerId || (body.viewerId && person.viewerId === body.viewerId),
       );
       if (!me) return json(res, 409, { ok: false, error: "你不在房间里" });
+      // The seat can be contested at any time, not only after the host walks away:
+      // the button is permanent, and a sitting host is replaced only if three
+      // quarters of the room agree. The one pointless case is challenging yourself.
+      if (me.isHost) return json(res, 409, { ok: false, error: "你已经是房主了" });
       if (people.length < 2) return json(res, 409, { ok: false, error: "房间里至少要有两个人才能投票" });
 
       const now = Date.now();
@@ -1218,8 +1241,10 @@ async function handle(req, res) {
     }
 
     if (rest === "/start" && req.method === "POST") {
-      if (!isOwner(req, room)) return json(res, 403, { ok: false, error: "owner token required" });
       const body = await readJson(req).catch(() => ({}));
+      if (!isOwner(req, room, body) && !senderHoldsHostSeat(req, room, body)) {
+        return json(res, 403, { ok: false, error: "only the room owner or its host can start" });
+      }
       if (room.status !== "ready" && room.status !== "live") {
         return json(res, 409, { ok: false, error: `room is ${room.status}, not ready` });
       }
@@ -1248,7 +1273,11 @@ async function handle(req, res) {
       // a crash must not leave a room leaderless forever.
       const seatIsVacant = !room.hostPeerId || hostIsAway(room);
       const claimingVacantSeat = seatIsVacant && targetPeerId === body.selfPeerId;
-      if (!isOwner(req, room, body) && !claimingVacantSeat) {
+      // The sitting host may hand over without the owner token: a host elected by
+      // a vote never had one, and neither does a guest on a phone. Identity is the
+      // viewerId that only that browser knows — it is deliberately not published
+      // in the participant list, so it cannot be copied out of the API.
+      if (!isOwner(req, room, body) && !claimingVacantSeat && !senderHoldsHostSeat(req, room, body)) {
         return json(res, 403, { ok: false, error: "only the room owner can transfer host" });
       }
 
@@ -1274,7 +1303,10 @@ async function handle(req, res) {
     }
 
     if (rest === "/end" && req.method === "POST") {
-      if (!isOwner(req, room)) return json(res, 403, { ok: false, error: "owner token required" });
+      const body = await readJson(req).catch(() => ({}));
+      if (!isOwner(req, room, body) && !senderHoldsHostSeat(req, room, body)) {
+        return json(res, 403, { ok: false, error: "only the room owner or its host can end" });
+      }
       updateRoom(room.id, { status: "ended", endedAt: Date.now() });
       return json(res, 200, { ok: true, room: roomView(getRoom(room.id)) });
     }
