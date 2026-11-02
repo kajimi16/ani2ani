@@ -537,7 +537,7 @@ function finishVote(room) {
           Date.now() - candidate.lastSeen < LIVE_WINDOW_MS,
       )
       .sort((a, b) => b.lastSeen - a.lastSeen)[0];
-    setHost(room, entry?.peerId ?? vote.candidatePeerId, vote.candidateName);
+    setHost(room, entry?.peerId ?? vote.candidatePeerId, vote.candidateName, vote.candidateViewerId);
     if (entry) noteHostPosition(room, entry.videoTime ?? 0, Boolean(entry.playing));
   }
 
@@ -571,11 +571,13 @@ function voteKey(person) {
 function senderHoldsHostSeat(req, room, body) {
   const viewerId = String(body?.viewerId ?? req.headers["x-viewer-id"] ?? "");
   if (!viewerId) return false;
+  // Stored on the room, so it survives the entry aging out of `clients` — a host
+  // who reloads stops reporting under the old peerId immediately.
+  if (room.hostViewerId) return room.hostViewerId === viewerId;
   const hostEntry = [...clients.values()].find(
     (entry) => entry.peerId === room.hostPeerId && Date.now() - entry.lastSeen < LIVE_WINDOW_MS,
   );
-  if (!hostEntry) return false;
-  return (hostEntry.viewerId || `peer:${hostEntry.peerId}`) === viewerId;
+  return Boolean(hostEntry) && (hostEntry.viewerId || `peer:${hostEntry.peerId}`) === viewerId;
 }
 
 function roomView(room) {
@@ -1128,7 +1130,30 @@ async function handle(req, res) {
       // the button is permanent, and a sitting host is replaced only if three
       // quarters of the room agree. The one pointless case is challenging yourself.
       if (me.isHost) return json(res, 409, { ok: false, error: "你已经是房主了" });
-      if (people.length < 2) return json(res, 409, { ok: false, error: "房间里至少要有两个人才能投票" });
+
+      // Alone in the room there is nobody to convince: taking the empty seat is
+      // immediate, and the announcement still goes out so the log reads the same.
+      if (people.length < 2) {
+        setHost(room, me.peerId, me.name, voteKey(me));
+        const entry = [...clients.values()].find(
+          (candidate) =>
+            (candidate.viewerId || `peer:${candidate.peerId}`) === voteKey(me) &&
+            Date.now() - candidate.lastSeen < LIVE_WINDOW_MS,
+        );
+        if (entry) noteHostPosition(room, entry.videoTime ?? 0, Boolean(entry.playing));
+        room.voteResult = {
+          id: crypto.randomUUID(),
+          candidateName: me.name || `观众 ${me.peerId.slice(-4)}`,
+          approved: true,
+          approvals: 1,
+          total: 1,
+          needed: 1,
+          at: Date.now(),
+        };
+        saveRooms();
+        broadcastRoom(room.id, { type: "vote-result", result: room.voteResult });
+        return json(res, 200, { ok: true, result: room.voteResult });
+      }
 
       const now = Date.now();
       room.vote = {
@@ -1294,7 +1319,7 @@ async function handle(req, res) {
         return json(res, 409, { ok: false, error: "that viewer is not in the room right now" });
       }
 
-      setHost(room, target.peerId, target.name);
+      setHost(room, target.peerId, target.name, target.viewerId ?? null);
       // Re-anchor to the new host's current position so the handover does not
       // yank everyone backwards or forwards.
       noteHostPosition(room, target.videoTime, target.playing);

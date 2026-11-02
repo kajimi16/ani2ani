@@ -274,9 +274,13 @@ export function markStarted(room, epochMs = Date.now()) {
 }
 
 /** Hand the screening to another peer. */
-export function setHost(room, peerId, name) {
+export function setHost(room, peerId, name, viewerId = null) {
   room.hostPeerId = peerId;
   room.hostName = name ?? null;
+  // The seat is tied to a person, not a page load: peerId changes on every
+  // refresh, viewerId does not. This is what lets the same host reclaim the seat
+  // (or keep controlling the room) after reloading.
+  room.hostViewerId = viewerId ?? null;
   saveSoon();
 }
 

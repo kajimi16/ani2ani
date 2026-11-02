@@ -118,13 +118,7 @@
             <button class="d-act" type="button" data-reload>重新载入</button>
             <a class="d-act" href="/">回到首页</a>
             <button class="d-act d-act-vote" id="voteStart" type="button" hidden>申请成为房主</button>
-            <span class="d-transfer-wrap">
-              <button class="d-act d-act-vote" id="transferStart" type="button" hidden>转交房主</button>
-              <div class="d-transfer" id="transferMenu" hidden>
-                <p class="d-transfer-title">把房主转交给</p>
-                <ul class="d-transfer-list" id="transferList"></ul>
-              </div>
-            </span>
+            <button class="d-act d-act-vote" id="transferStart" type="button" hidden>转交房主</button>
           </div>
         </section>
 
@@ -195,6 +189,16 @@
       </div>
       <p class="error" id="lockError" hidden></p>
     </section>
+
+    <dialog class="d-picker" id="transferDialog">
+      <div class="d-picker-body">
+        <h2>把房主转交给</h2>
+        <ul class="d-picker-list" id="transferList"></ul>
+        <div class="d-picker-actions">
+          <button class="d-quiet" type="button" data-close-transfer>取消</button>
+        </div>
+      </div>
+    </dialog>
 
     <footer class="d-footer"><p id="footerMeta"></p></footer>
     <p id="status" class="sr-only"></p>
@@ -417,7 +421,7 @@
       const peopleEl = document.getElementById("people");
       const peopleList = document.getElementById("peopleList");
       const transferStart = document.getElementById("transferStart");
-      const transferMenu = document.getElementById("transferMenu");
+      const transferDialog = document.getElementById("transferDialog");
       const transferList = document.getElementById("transferList");
 
       const screening = () => window.__screening;
@@ -485,6 +489,10 @@
       // → POST at HTTP speed. Observed live: 34 requests inside one second.
       let claimCooldownUntil = 0;
       let claimBackoffMs = 1500;
+      // When the recorded seat first looked abandoned. Reclaiming blindly is what
+      // undid every transfer; identity now comes from the server, so this is just
+      // a debounce against retrying on every poll.
+      let leaderlessSince = 0;
       let myPeerId = null;
       async function ensureHost(room) {
         // A vacant seat is filled in exactly two ways now:
@@ -495,13 +503,22 @@
         // without anyone agreeing.
         if (claiming || Date.now() < claimCooldownUntil) return;
         const unassigned = !room.hostPeerId;
-        // Only a room that has never had a host is claimed automatically. Taking
-        // back a seat whose host is merely "away" is what undid every transfer:
-        // the new host needs a couple of seconds to report, during which the old
-        // token holder grabbed the seat back. A vacant seat is now filled by a
-        // vote, or by an explicit hand-over.
-        if (!unassigned) return;
-        if (!token) return;
+        const leaderless = Boolean(room.hostPeerId) && room.hostAway;
+        leaderlessSince = leaderless ? leaderlessSince || Date.now() : 0;
+
+        // A fresh room is claimed by its owner. A seat whose holder vanished is
+        // claimed back by the owner too, but only after 15 s of silence — a
+        // transfer leaves the seat briefly "empty" until the new host reports,
+        // and grabbing it then is exactly what used to undo every hand-over.
+        // The server decides *who* may take the seat back (viewerId), so this is
+        // only a debounce, not a safety margin.
+        const ownerReclaim = leaderless && Date.now() - leaderlessSince > 3_000;
+        // A fresh room belongs to whoever holds the token. A seat whose holder
+        // vanished is reclaimed by that same person after 15 s — and "same person"
+        // is decided by the server from the viewerId, because a host elected by a
+        // vote has no token at all.
+        if (unassigned && !token) return;
+        if (!unassigned && !ownerReclaim) return;
         const me = window.__screening;
         if (!me) return;
         myPeerId = me.stats().peerId;
@@ -580,8 +597,7 @@
                   )}</button></li>`,
               )
               .join("")
-          : '<li class="d-transfer-empty">房间里还没有别人</li>';
-        if (others.length === 0) transferMenu.hidden = true;
+          : '<li class="d-picker-empty">房间里还没有别人</li>';
         if (room.vote) showVote(room.vote);
         else if (voteShownId && votedId !== voteShownId) hideVote();
 
@@ -591,27 +607,22 @@
         }
       }
 
-      transferStart.addEventListener("click", (event) => {
-        event.stopPropagation();
-        transferMenu.hidden = !transferMenu.hidden;
-      });
+      transferStart.addEventListener("click", () => transferDialog.showModal());
+      document.querySelector("[data-close-transfer]").addEventListener("click", () => transferDialog.close());
 
       transferList.addEventListener("click", async (event) => {
         const button = event.target.closest("button[data-target]");
         if (!button) return;
-        transferMenu.hidden = true;
+        transferDialog.close();
         await fetch(`/api/rooms/${roomId}/host`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-room-token": token, "x-viewer-id": viewerId ?? "" },
           body: JSON.stringify({ peerId: button.dataset.target, viewerId }),
         }).catch(() => {});
+        // Pull the player's view of the seat forward before re-rendering, or the
+        // action bar keeps showing the previous role for up to a poll.
+        window.__screening?.refreshRoom?.();
         refreshRoom();
-      });
-
-      document.addEventListener("click", (event) => {
-        if (transferMenu.hidden) return;
-        if (event.target.closest(".d-transfer-wrap")) return;
-        transferMenu.hidden = true;
       });
 
       function escapeHtml(value) {
@@ -1023,6 +1034,10 @@
 
       document.addEventListener("vote-state", (event) => showVote(event.detail));
       document.addEventListener("vote-result", (event) => {
+        // The seat may have changed hands: refresh now instead of waiting for the
+        // next poll, so the buttons flip together with the announcement.
+        window.__screening?.refreshRoom?.();
+        refreshRoom();
         // If this screen just cast a ballot, let the colour flood finish and the
         // banner linger its second before it goes; otherwise the result would cut
         // the animation off mid-way.

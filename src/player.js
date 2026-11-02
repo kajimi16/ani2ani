@@ -736,4 +736,7 @@ window.__screening = {
   signalingUrl: signalingUrl(),
   stunUrl: stunUrl(),
   loadSource,
+  // The room page changes the host seat (transfer / vote) and needs the player's
+  // view of `hostPeerId` to catch up now, not on the next 3 s poll.
+  refreshRoom,
 };
