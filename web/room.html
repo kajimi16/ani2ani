@@ -118,6 +118,13 @@
             <button class="d-act" type="button" data-reload>重新载入</button>
             <a class="d-act" href="/">回到首页</a>
             <button class="d-act d-act-vote" id="voteStart" type="button" hidden>申请成为房主</button>
+            <span class="d-transfer-wrap">
+              <button class="d-act d-act-vote" id="transferStart" type="button" hidden>转交房主</button>
+              <div class="d-transfer" id="transferMenu" hidden>
+                <p class="d-transfer-title">把房主转交给</p>
+                <ul class="d-transfer-list" id="transferList"></ul>
+              </div>
+            </span>
           </div>
         </section>
 
@@ -167,12 +174,6 @@
         <div class="d-pane" data-pane="people" hidden>
           <section class="people" id="people" hidden>
             <ul id="peopleList"></ul>
-            <div class="row" id="hostControls" hidden>
-              <span class="hint">把房主转交给</span>
-              <select id="hostTransfer"></select>
-              <button id="hostTransferGo" type="button">转交</button>
-            </div>
-            <p class="hint" id="hostNote" hidden>你是房主：离开前请先把房主转交给别人。</p>
           </section>
           <p class="d-empty" id="peopleEmpty" hidden>还没有人进来。</p>
         </div>
@@ -415,10 +416,9 @@
       const syncBarDismiss = document.getElementById("syncBarDismiss");
       const peopleEl = document.getElementById("people");
       const peopleList = document.getElementById("peopleList");
-      const hostControls = document.getElementById("hostControls");
-      const hostTransfer = document.getElementById("hostTransfer");
-      const hostTransferGo = document.getElementById("hostTransferGo");
-      const hostNote = document.getElementById("hostNote");
+      const transferStart = document.getElementById("transferStart");
+      const transferMenu = document.getElementById("transferMenu");
+      const transferList = document.getElementById("transferList");
 
       const screening = () => window.__screening;
       let latestRoom = null;
@@ -564,19 +564,24 @@
         // seat, which is what keeps a screening alive after a crashed host.
         // A host elected by vote never had the owner token; the transfer control
         // must still be theirs.
-        hostControls.hidden = !(owned || iAmHost) || people.length === 0;
-        hostNote.hidden = !iAmHost || people.length < 2;
-        hostTransfer.innerHTML = people
-          .filter((person) => !person.isHost)
-          .map((person) => `<option value="${person.peerId}">${escapeHtml(person.name || person.peerId.slice(-4))}</option>`)
-          .join("");
-        hostTransferGo.disabled = hostTransfer.options.length === 0;
-
-        // Poll fallback for the vote: the socket carries the live updates, but a
-        // client that reconnects (or joined mid-vote) learns the state here.
-        // The button is permanent; it is only disabled while a vote is running.
-        voteStart.hidden = false;
+        // One slot, two roles: the host hands the room over, everybody else can
+        // stand for election. Never both.
+        transferStart.hidden = !iAmHost || people.length < 2;
+        voteStart.hidden = iAmHost;
         voteStart.disabled = Boolean(room.vote);
+
+        const others = people.filter((person) => !person.isHost);
+        transferList.innerHTML = others.length
+          ? others
+              .map(
+                (person) =>
+                  `<li><button type="button" data-target="${escapeHtml(person.peerId)}">${escapeHtml(
+                    person.name || `观众 ${person.peerId.slice(-4)}`,
+                  )}</button></li>`,
+              )
+              .join("")
+          : '<li class="d-transfer-empty">房间里还没有别人</li>';
+        if (others.length === 0) transferMenu.hidden = true;
         if (room.vote) showVote(room.vote);
         else if (voteShownId && votedId !== voteShownId) hideVote();
 
@@ -586,15 +591,27 @@
         }
       }
 
-      hostTransferGo.addEventListener("click", async () => {
-        const target = hostTransfer.value;
-        if (!target) return;
+      transferStart.addEventListener("click", (event) => {
+        event.stopPropagation();
+        transferMenu.hidden = !transferMenu.hidden;
+      });
+
+      transferList.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-target]");
+        if (!button) return;
+        transferMenu.hidden = true;
         await fetch(`/api/rooms/${roomId}/host`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-room-token": token, "x-viewer-id": viewerId ?? "" },
-          body: JSON.stringify({ peerId: target, viewerId }),
+          body: JSON.stringify({ peerId: button.dataset.target, viewerId }),
         }).catch(() => {});
         refreshRoom();
+      });
+
+      document.addEventListener("click", (event) => {
+        if (transferMenu.hidden) return;
+        if (event.target.closest(".d-transfer-wrap")) return;
+        transferMenu.hidden = true;
       });
 
       function escapeHtml(value) {
@@ -773,6 +790,135 @@
         location.href = "/";
       });
 
+
+      /* ------------------------------------------------------- 全屏播放界面 */
+
+      // Fullscreen gets the layout a video-on-demand player has: a title strip on
+      // top, a two-row control bar (progress above the buttons) and an inline
+      // danmaku composer, all inside Plyr's container so they survive fullscreen.
+      // Everything that only makes sense in a window (quality, speed, follow) is
+      // deliberately absent.
+      function setupFullscreenUI() {
+        const player = window.__screening?.plyr;
+        const controls = document.querySelector(".plyr__controls");
+        if (!player || !controls) return false;
+
+        // --- top strip: what am I watching
+        const head = document.createElement("div");
+        head.className = "fs-head";
+        head.innerHTML = '<span class="fs-title"></span>';
+        document.querySelector(".plyr").appendChild(head);
+
+        // --- merged time: 04:06 / 10:23
+        const duration = document.querySelector(".plyr__time--duration");
+        if (duration) duration.classList.add("fs-duration");
+        const total = document.createElement("span");
+        total.className = "plyr__time plyr__time--total";
+        total.textContent = "/ 00:00";
+        duration?.after(total);
+
+        const format = (seconds) => {
+          if (!Number.isFinite(seconds) || seconds < 0) return "00:00";
+          const m = Math.floor(seconds / 60);
+          const s = Math.floor(seconds % 60);
+          return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+        };
+        const paintTotal = () => {
+          total.textContent = `/ ${format(document.getElementById("video").duration)}`;
+          const title = document.querySelector(".fs-title");
+          if (title) title.textContent = document.getElementById("roomTitle").textContent;
+        };
+        player.on("timeupdate", paintTotal);
+        player.on("loadedmetadata", paintTotal);
+        paintTotal();
+
+        // --- danmaku on/off + inline composer
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "plyr__controls__item plyr__control fs-dm-toggle";
+        toggle.title = "弹幕开关";
+        toggle.setAttribute("aria-label", "弹幕开关");
+        toggle.textContent = "弹";
+        let danmakuOn = localStorage.getItem("danmaku-off") !== "1";
+        const paintToggle = () => {
+          toggle.classList.toggle("is-off", !danmakuOn);
+          document.documentElement.classList.toggle("danmaku-hidden", !danmakuOn);
+        };
+        paintToggle();
+        toggle.addEventListener("click", () => {
+          danmakuOn = !danmakuOn;
+          try {
+            localStorage.setItem("danmaku-off", danmakuOn ? "0" : "1");
+          } catch {
+            /* private mode */
+          }
+          paintToggle();
+        });
+
+        const composer = document.createElement("div");
+        composer.className = "fs-dm";
+        composer.innerHTML = '<input type="text" maxlength="120" placeholder="发个友善的弹幕见证当下" aria-label="弹幕内容" /><button type="button">发送</button>';
+        const composerInput = composer.querySelector("input");
+        const composerSend = composer.querySelector("button");
+
+        const send = () => {
+          const api = window.__screening?.danmaku;
+          if (!api) return;
+          if (api.send(composerInput.value)) composerInput.value = "";
+        };
+        composerSend.addEventListener("click", send);
+        composerInput.addEventListener("keydown", (event) => {
+          // Keep the keystroke away from Plyr's shortcuts (space toggles playback).
+          event.stopPropagation();
+          if (event.key !== "Enter" || event.isComposing) return;
+          event.preventDefault();
+          send();
+        });
+        composerInput.addEventListener("focus", () => document.querySelector(".plyr")?.classList.add("fs-typing"));
+        composerInput.addEventListener("blur", () => document.querySelector(".plyr")?.classList.remove("fs-typing"));
+
+        controls.append(toggle, composer);
+
+        // --- density curve above the progress rail
+        const progress = document.querySelector(".plyr__progress__container");
+        if (progress) {
+          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          svg.setAttribute("class", "fs-heat");
+          svg.setAttribute("viewBox", "0 0 100 24");
+          svg.setAttribute("preserveAspectRatio", "none");
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          svg.appendChild(path);
+          progress.appendChild(svg);
+
+          const BUCKETS = 100;
+          const counts = new Array(BUCKETS).fill(0);
+          const draw = () => {
+            const peak = Math.max(1, ...counts);
+            const points = counts.map((value, index) => {
+              const x = (index / (BUCKETS - 1)) * 100;
+              const y = 22 - (value / peak) * 20;
+              return `${x.toFixed(2)},${y.toFixed(2)}`;
+            });
+            path.setAttribute("d", `M0,24 L${points.join(" L")} L100,24 Z`);
+          };
+          document.addEventListener("danmaku-arrived", (event) => {
+            const time = Number(event.detail?.videoTime);
+            const span = document.getElementById("video").duration;
+            if (!Number.isFinite(time) || !Number.isFinite(span) || span <= 0) return;
+            const index = Math.min(BUCKETS - 1, Math.max(0, Math.floor((time / span) * BUCKETS)));
+            counts[index] += 1;
+            draw();
+          });
+        }
+
+        return true;
+      }
+
+      // Plyr is created by the player module; wait for it instead of racing it.
+      (function waitForPlayer(attempt = 0) {
+        if (setupFullscreenUI() || attempt > 40) return;
+        setTimeout(() => waitForPlayer(attempt + 1), 150);
+      })();
 
       /* ------------------------------------------------------------- 房主投票 */
 

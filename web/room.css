@@ -1352,3 +1352,231 @@ html[data-theme="dark"] body.studio .d-act-vote {
     transform: translateX(-50%);
   }
 }
+
+/* ------------------------------------------------- 全屏播放界面（点播式） */
+
+/* Plyr's container is the fullscreen element, so `:fullscreen` is the honest
+   selector — no extra class bookkeeping. The control bar becomes two rows:
+   progress above, buttons below. */
+body.studio .plyr {
+  --plyr-color-main: #00aeec;
+  --plyr-video-controls-background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
+  --plyr-video-progress-buffered-background: rgba(0, 174, 236, 0.38);
+  --plyr-control-spacing: 10px;
+}
+
+body.studio .plyr__controls {
+  flex-wrap: wrap;
+  padding: 26px 12px 8px;
+  row-gap: 4px;
+}
+
+body.studio .plyr__controls .plyr__progress__container {
+  order: -1;
+  flex: 0 0 100%;
+  margin: 0 0 2px;
+}
+
+/* Time reads as one value: 04:06 / 10:23 */
+body.studio .plyr__time--duration.fs-duration {
+  display: none;
+}
+
+body.studio .plyr__time--total {
+  margin-left: -6px;
+  opacity: 0.65;
+}
+
+/* Danmaku switch + inline composer live inside the control bar. */
+body.studio .fs-dm-toggle {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+body.studio .fs-dm-toggle.is-off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+html.danmaku-hidden .danmaku-layer .danmaku-item {
+  display: none;
+}
+
+body.studio .fs-dm {
+  display: none;
+  order: 4;
+  flex: 1 1 12rem;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px;
+}
+
+body.studio .plyr:fullscreen .fs-dm,
+body.studio .plyr--fullscreen-fallback .fs-dm {
+  display: flex;
+}
+
+body.studio .fs-dm input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+body.studio .fs-dm input::placeholder {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+body.studio .fs-dm input:focus {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+body.studio .fs-dm button {
+  flex: none;
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #00aeec;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Typing must not be interrupted by the auto-hide timer. Plyr hides the bar with
+   opacity + pointer-events + a translate, so all three have to be undone. */
+body.studio .plyr.fs-typing .plyr__controls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+/* Top strip inside fullscreen: what am I watching. */
+body.studio .fs-head {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 3;
+  display: none;
+  align-items: center;
+  padding: 16px 22px 34px;
+  background: linear-gradient(rgba(0, 0, 0, 0.7), transparent);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* The top strip has to fade with the control bar; only .plyr__controls reacts to
+   Plyr's hide class on its own. */
+body.studio .plyr--hide-controls .fs-head {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+
+body.studio .plyr:fullscreen .fs-head,
+body.studio .plyr--fullscreen-fallback .fs-head {
+  display: flex;
+}
+
+body.studio .fs-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Danmaku density curve, drawn over the progress rail. */
+body.studio .fs-heat {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  width: 100%;
+  height: 18px;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+body.studio .fs-heat path {
+  fill: rgba(0, 174, 236, 0.55);
+}
+
+body.studio .plyr__progress__container {
+  position: relative;
+}
+
+/* Action-bar transfer picker: same slot as "apply for host", opposite role. */
+.d-transfer-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.d-transfer {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  min-width: 180px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--card-shadow);
+}
+
+.d-transfer[hidden] {
+  display: none;
+}
+
+.d-transfer-title {
+  margin: 2px 6px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.d-transfer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.d-transfer-list button {
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+}
+
+.d-transfer-list button:hover {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+
+html[data-theme="dark"] body.studio .d-transfer-list button:hover {
+  color: var(--accent);
+}
+
+.d-transfer-empty {
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}

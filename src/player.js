@@ -181,20 +181,9 @@ const hls = new HlsWithP2P({
 // fragment loaders, so anything that swapped the media element for its own player
 // would quietly disable the P2P path. Plyr only builds controls around it.
 const plyr = new Plyr(video, {
-  controls: [
-    "play-large",
-    "play",
-    "progress",
-    "current-time",
-    "duration",
-    "mute",
-    "volume",
-    "settings",
-    "pip",
-    "fullscreen",
-  ],
-  settings: ["speed"],
-  speed: { selected: 1, options: [0.75, 1, 1.25, 1.5, 2] },
+  // No speed menu and no PiP: a synchronised screening has one speed, and a
+  // picture-in-picture window would drift out of the room's timeline.
+  controls: ["play-large", "play", "progress", "current-time", "duration", "mute", "volume", "fullscreen"],
   seekTime: 10,
   keyboard: { focused: true, global: false },
   tooltips: { controls: true, seek: true },

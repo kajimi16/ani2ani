@@ -64,6 +64,8 @@ export function createDanmaku({ roomId, name, peerId, videoTime, playerContainer
     node.className = "danmaku-item";
     node.textContent = item.text;
     layer.appendChild(node);
+    // Feeds the density curve on the progress bar; the item carries its videoTime.
+    document.dispatchEvent(new CustomEvent("danmaku-arrived", { detail: item }));
 
     const width = node.offsetWidth || 120;
     const lane = laneFor(width);
