@@ -2,6 +2,14 @@
 	admin off
 	persist_config off
 	auto_https off
+
+	# nginx 在前面（ani2.kajimi.cc → 127.0.0.1:8080）。不声明信任它，Caddy 会把
+	# 进来的 X-Forwarded-For 丢掉、换成自己的对端地址，于是所有用户对 Node 来说
+	# 都是 127.0.0.1：开房限流变成全站共用一个 6 次/小时的桶，/api/stats 的来源
+	# 地址也全成了回环。
+	servers {
+		trusted_proxies static 127.0.0.1/32
+	}
 }
 
 # Screening origin. Port 8080 only — no privileged ports, no TLS cert work.
