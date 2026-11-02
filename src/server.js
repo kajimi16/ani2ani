@@ -22,6 +22,10 @@ import {
   hasAccessToken,
   hlsDir,
   isPrivate,
+  MAX_EPISODES,
+  episodeDir,
+  episodeMediaBase,
+  currentEpisode,
   issueAccessToken,
   listRooms,
   load as loadRooms,
@@ -475,11 +479,6 @@ function json(res, status, payload) {
 
 /* ------------------------------------------------------------------ rooms */
 
-/** Media for a room, as the browser will request it. */
-function roomMediaBase(room) {
-  return `/media/${room.id}/hls/`;
-}
-
 /* ------------------------------------------------------------ host voting */
 
 // A room whose host walked away needs a way to pick a new one that is not "the
@@ -580,6 +579,20 @@ function senderHoldsHostSeat(req, room, body) {
   return Boolean(hostEntry) && (hostEntry.viewerId || `peer:${hostEntry.peerId}`) === viewerId;
 }
 
+/** Media prefix of the episode that is currently screening, if it can play. */
+function readyMediaBase(room) {
+  const episode = currentEpisode(room);
+  if (!episode || episode.status !== "ready") return null;
+  return `${episodeMediaBase(room.id, episode)}hls/`;
+}
+
+function posterUrl(room) {
+  const episode = currentEpisode(room);
+  const target = posterPath(room.id, episode?.id ?? null);
+  if (!fs.existsSync(target)) return null;
+  return `${episodeMediaBase(room.id, episode)}poster.jpg`;
+}
+
 function roomView(room) {
   if (!room) return null;
   // Same stripping as the store's listing: the owner token is a capability, and
@@ -593,10 +606,17 @@ function roomView(room) {
     // handing the seat over, and a voted-in host has no ownerToken at all. Never
     // publish it.
     participants: people.map(({ viewerId, ...rest }) => rest),
-    mediaBase: room.status === "live" || room.status === "ready" ? roomMediaBase(room) : null,
-    // Cover for the portal. Null until a transcode has produced one, so the card
-    // can render a plain block instead of a broken image.
-    poster: fs.existsSync(posterPath(room.id)) ? `/media/${room.id}/poster.jpg` : null,
+    episodes: (room.episodes ?? []).map((episode) => ({
+      id: episode.id,
+      name: episode.name,
+      durationSec: episode.durationSec ?? 0,
+      segments: episode.segments ?? 0,
+      status: episode.status ?? "ready",
+      current: episode.id === (currentEpisode(room)?.id ?? null),
+    })),
+    currentEpisodeId: currentEpisode(room)?.id ?? null,
+    mediaBase: readyMediaBase(room),
+    poster: posterUrl(room),
     viewers: people.length,
     // `hostAway` is what lets the UI say "房主已离开" instead of silently drifting
     // once the leader's reports stop arriving.
@@ -725,22 +745,29 @@ let activeTranscodes = 0;
  * that nobody touched. Serialising is the cheap fix: the waiting room shows
  * `queued` and the owner sees their position.
  */
-function enqueueTranscode(room, sourceFile) {
+function enqueueTranscode(room, sourceFile, episodeId) {
   const bad = inspectSource(sourceFile);
   if (bad) {
     busyRooms.delete(room.id);
-    updateRoom(room.id, { status: "failed", error: bad });
+    const episode = room.episodes?.find((entry) => entry.id === episodeId);
+    if (episode) episode.status = "failed";
+    updateRoom(room.id, { status: hasReadyEpisode(room) ? "ready" : "failed", error: bad });
     return;
   }
   const durationSec = probeDuration(sourceFile);
+  const episode = room.episodes?.find((entry) => entry.id === episodeId);
+  if (episode) episode.durationSec = durationSec;
   updateRoom(room.id, {
-    status: "queued",
-    durationSec,
+    status: room.status === "live" || room.status === "ended" ? room.status : "queued",
     error: null,
     progress: { percent: 0, outTimeSec: 0, speed: "", position: transcodeQueue.length + 1 },
   });
-  transcodeQueue.push({ roomId: room.id, sourceFile, durationSec });
+  transcodeQueue.push({ roomId: room.id, sourceFile, durationSec, episodeId });
   pumpTranscodeQueue();
+}
+
+function hasReadyEpisode(room) {
+  return (room.episodes ?? []).some((episode) => episode.status === "ready");
 }
 
 function pumpTranscodeQueue() {
@@ -753,7 +780,7 @@ function pumpTranscodeQueue() {
       continue;
     }
     activeTranscodes += 1;
-    runTranscode(room, next.sourceFile, next.durationSec).finally(() => {
+    runTranscode(room, next.sourceFile, next.durationSec, next.episodeId).finally(() => {
       activeTranscodes -= 1;
       pumpTranscodeQueue();
     });
@@ -767,9 +794,10 @@ function pumpTranscodeQueue() {
   });
 }
 
-async function runTranscode(room, sourceFile, durationSec) {
+async function runTranscode(room, sourceFile, durationSec, episodeId) {
+  const findEpisode = () => getRoom(room.id)?.episodes?.find((entry) => entry.id === episodeId) ?? null;
+
   updateRoom(room.id, {
-    status: "transcoding",
     error: null,
     progress: { percent: 0, outTimeSec: 0, speed: "" },
   });
@@ -780,13 +808,14 @@ async function runTranscode(room, sourceFile, durationSec) {
   const job = startTranscode(
     {
       sourceFile,
-      outputDir: hlsDir(room.id),
+      outputDir: hlsDir(room.id, episodeId),
       durationSec,
       bitrateKbps: room.bitrateKbps,
     },
     (progress) => {
       const current = getRoom(room.id);
-      if (!current || current.status !== "transcoding") return;
+      // The episode is the unit that processes; the room may be live meanwhile.
+      if (!current || findEpisode()?.status !== "transcoding") return;
       current.progress = {
         percent: progress.percent,
         outTimeSec: progress.outTimeSec,
@@ -816,6 +845,8 @@ async function runTranscode(room, sourceFile, durationSec) {
     busyRooms.delete(room.id);
     const current = getRoom(room.id);
     if (!current) return;
+    const episode = findEpisode();
+
     if (result.ok) {
       if (!KEEP_SOURCE) {
         // Only after success: on failure the source is what lets the owner retry
@@ -826,21 +857,32 @@ async function runTranscode(room, sourceFile, durationSec) {
           log(`room ${room.id}: could not remove source: ${error.message}`);
         }
       }
-      // Ready but not yet started: the owner decides when the screening begins,
-      // because everyone's playback clock is pinned to that moment.
+      if (episode) {
+        episode.status = "ready";
+        episode.segments = result.segments;
+        episode.durationSec = durationSec;
+      }
+      // A room that was already screening keeps its status (and its clock); one
+      // that could not play anything before is now ready.
+      const keepStatus = ["live", "ended"].includes(current.status);
       updateRoom(room.id, {
-        status: "ready",
+        status: keepStatus ? current.status : "ready",
         segments: result.segments,
         progress: null,
         error: null,
-        syncEpochMs: null,
+        ...(keepStatus ? {} : { syncEpochMs: null }),
       });
     } else {
+      if (episode) {
+        episode.status = "failed";
+        episode.segments = 0;
+      }
       // Drop the half-written segments: they are useless and, in the disk-full
       // case, keeping them is what prevents recovery.
-      discardOutput(room.id);
+      discardOutput(room.id, episodeId);
+      const anyReady = (current.episodes ?? []).some((entry) => entry.status === "ready");
       updateRoom(room.id, {
-        status: "failed",
+        status: anyReady ? "ready" : "failed",
         segments: 0,
         progress: null,
         error: diskExhausted
@@ -1204,11 +1246,14 @@ async function handle(req, res) {
     }
 
     if (rest === "/progress" && req.method === "GET") {
-      // Cheap poll target for the owner's upload/transcode screen.
+      // Cheap poll target for the owner's upload/transcode screen. Reports the
+      // episode being processed; the room may be busy while another one plays.
+      const processing = room.episodes?.find((episode) => episode.status === "transcoding");
       return json(res, 200, {
         status: room.status,
         progress: room.progress ?? null,
-        segments: room.status === "transcoding" ? countSegments(hlsDir(room.id)) : room.segments,
+        episodeId: processing?.id ?? null,
+        segments: processing ? countSegments(hlsDir(room.id, processing.id)) : (currentEpisode(room)?.segments ?? 0),
         error: room.error ?? null,
       });
     }
@@ -1241,28 +1286,85 @@ async function handle(req, res) {
         });
       }
 
+      if ((room.episodes?.length ?? 0) >= MAX_EPISODES) {
+        return json(res, 409, {
+          ok: false,
+          error: `每个房间最多 ${MAX_EPISODES} 集，先删掉一集或另开房间`,
+        });
+      }
+
       busyRooms.add(room.id);
       const filename = decodeURIComponent(String(req.headers["x-filename"] ?? "upload"));
-      const destination = sourcePath(room.id, safeExtension(filename));
-      updateRoom(room.id, { status: "uploading", error: null, progress: null });
+      const episode = {
+        id: crypto.randomUUID().slice(0, 8),
+        name: filename,
+        bytes: 0,
+        durationSec: 0,
+        segments: 0,
+        status: "transcoding",
+        createdAt: Date.now(),
+      };
+      const destination = sourcePath(room.id, safeExtension(filename), episode.id);
+      // Each episode owns a directory; nothing else creates it for us.
+      fs.mkdirSync(episodeDir(room.id, episode.id), { recursive: true });
+      room.episodes = [...(room.episodes ?? []), episode];
+      room.currentEpisodeId = room.currentEpisodeId ?? episode.id;
+      // Only a room that cannot play anything yet reports the upload state as its
+      // own status; a live screening stays live while a second episode processes.
+      updateRoom(room.id, {
+        status: room.status === "live" || room.status === "ended" ? room.status : "transcoding",
+        error: null,
+        progress: null,
+      });
 
       let result;
       try {
         result = await receiveUpload(req, destination, declared);
       } catch (error) {
         busyRooms.delete(room.id);
-        updateRoom(room.id, { status: "failed", error: error.message });
+        episode.status = "failed";
+        // A failed second upload must not put an existing screening behind a
+        // "处理失败" veil: only a room with nothing playable becomes failed.
+        const anyReady = (getRoom(room.id)?.episodes ?? []).some((entry) => entry.status === "ready");
+        updateRoom(room.id, anyReady ? { error: error.message } : { status: "failed", error: error.message });
         return json(res, 400, { ok: false, error: error.message });
       }
 
-      updateRoom(room.id, {
-        sourceName: filename,
-        sourceBytes: result.bytes,
-        status: "transcoding",
-      });
-      log(`room ${room.id}: received ${(result.bytes / 1e6).toFixed(1)} MB of ${filename}`);
-      enqueueTranscode(room, destination);
-      return json(res, 202, { ok: true, bytes: result.bytes, status: getRoom(room.id)?.status });
+      episode.bytes = result.bytes;
+      updateRoom(room.id, { error: null });
+      log(`room ${room.id}: received ${(result.bytes / 1e6).toFixed(1)} MB of ${filename} (episode ${episode.id})`);
+      enqueueTranscode(room, destination, episode.id);
+      return json(res, 202, { ok: true, bytes: result.bytes, episodeId: episode.id, status: getRoom(room.id)?.status });
+    }
+
+    const episodeMatch = rest.match(/^\/episodes\/([A-Za-z0-9-]{4,40})$/);
+    if (episodeMatch && req.method === "DELETE") {
+      if (!isOwner(req, room)) return json(res, 403, { ok: false, error: "owner token required" });
+      const episodeId = episodeMatch[1];
+      const episode = room.episodes?.find((entry) => entry.id === episodeId);
+      if (!episode) return json(res, 404, { ok: false, error: "episode not found" });
+      if (room.currentEpisodeId === episodeId) {
+        return json(res, 409, { ok: false, error: "这一集正在使用，先切到别的集再删" });
+      }
+      if (episode.status === "transcoding") {
+        return json(res, 409, { ok: false, error: "这一集还在处理中" });
+      }
+
+      try {
+        fs.rmSync(episodeDir(room.id, episodeId), { recursive: true, force: true });
+      } catch (error) {
+        log(`room ${room.id}: could not remove episode ${episodeId}: ${error.message}`);
+      }
+      room.episodes = (room.episodes ?? []).filter((entry) => entry.id !== episodeId);
+
+      if (room.episodes.length === 0) {
+        room.currentEpisodeId = null;
+        updateRoom(room.id, { status: "created", segments: 0, error: null, progress: null });
+      } else {
+        saveRooms();
+      }
+      log(`room ${room.id}: removed episode ${episodeId}`);
+      return json(res, 200, { ok: true, room: roomView(getRoom(room.id)) });
     }
 
     if (rest === "/start" && req.method === "POST") {
@@ -1275,6 +1377,22 @@ async function handle(req, res) {
       if (!["ready", "live", "ended"].includes(room.status)) {
         return json(res, 409, { ok: false, error: `room is ${room.status}, not ready` });
       }
+      // The host picks which episode is screening; switching re-anchors everyone
+      // to a fresh clock, exactly like starting for the first time.
+      const requestedEpisode = typeof body.episodeId === "string" ? body.episodeId : null;
+      if (requestedEpisode) {
+        const chosen = room.episodes?.find((episode) => episode.id === requestedEpisode);
+        if (!chosen) return json(res, 404, { ok: false, error: "episode not found" });
+        if (chosen.status !== "ready") {
+          return json(res, 409, { ok: false, error: `这一集还在${chosen.status === "failed" ? "失败" : "处理"}中` });
+        }
+        room.currentEpisodeId = chosen.id;
+      }
+      const episode = currentEpisode(room);
+      if (!episode || episode.status !== "ready") {
+        return json(res, 409, { ok: false, error: "还没有可播放的片源" });
+      }
+
       // `delaySec` lets the owner schedule a start a little in the future so late
       // arrivals join at the beginning rather than mid-scene.
       const delayMs = Math.max(0, Math.min(300, Number(body.delaySec) || 0)) * 1000;

@@ -1712,3 +1712,80 @@ body.studio .dm-open-btn {
     display: none;
   }
 }
+
+/* Episode list inside the owner panel. */
+.eps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--field);
+  font-size: 12px;
+}
+
+.ep.is-current {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.ep-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ep-meta {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ep-flag {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+}
+
+.ep button {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--accent-line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--accent-deep);
+  font-size: 11px;
+}
+
+html[data-theme="dark"] body.studio .ep button {
+  color: var(--accent);
+}
+
+.ep-del {
+  flex: none;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.ep-del:hover:not(:disabled) {
+  border-color: var(--danger);
+}

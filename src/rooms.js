@@ -79,20 +79,45 @@ export function roomDir(id) {
   return path.join(ROOMS_DIR, id);
 }
 
-export function hlsDir(id) {
-  return path.join(roomDir(id), "hls");
+export const MAX_EPISODES = 3;
+
+/**
+ * Where one episode's files live.
+ *
+ * `null` means the room's own root, which is how rooms created before a room
+ * could hold several videos keep working without moving gigabytes around.
+ */
+export function episodeDir(roomId, episodeId) {
+  if (!episodeId || episodeId === "main") return roomDir(roomId);
+  return path.join(roomDir(roomId), "ep", episodeId);
+}
+
+export function hlsDir(id, episodeId = null) {
+  return path.join(episodeDir(id, episodeId), "hls");
 }
 
 /**
  * Cover frame for the portal's room cards. Sits next to `hls/`, so Caddy's
  * `/media/*` root serves it without another route.
  */
-export function posterPath(id) {
-  return path.join(roomDir(id), "poster.jpg");
+export function posterPath(id, episodeId = null) {
+  return path.join(episodeDir(id, episodeId), "poster.jpg");
 }
 
-export function sourcePath(id, extension = "src") {
-  return path.join(roomDir(id), `source.${extension}`);
+export function sourcePath(id, extension = "src", episodeId = null) {
+  return path.join(episodeDir(id, episodeId), `source.${extension}`);
+}
+
+/** The episode a room plays when nothing else is selected. */
+export function currentEpisode(room) {
+  if (!room?.episodes?.length) return null;
+  return room.episodes.find((episode) => episode.id === room.currentEpisodeId) ?? room.episodes[0];
+}
+
+/** Media URL prefix for an episode, or the legacy root. */
+export function episodeMediaBase(roomId, episode) {
+  if (!episode || episode.id === "main") return `/media/${roomId}/`;
+  return `/media/${roomId}/ep/${episode.id}/`;
 }
 
 function publicRoom(room) {
@@ -146,6 +171,22 @@ export function load() {
     if (room.status === "transcoding" || room.status === "uploading" || room.status === "queued") {
       room.status = "failed";
       room.error = "server restarted while processing; upload again";
+    }
+    // Rooms created before multi-episode support keep their single output where
+    // it is: it becomes the "main" episode, whose directory is the room root.
+    if (!Array.isArray(room.episodes)) room.episodes = [];
+    if (room.episodes.length === 0 && room.sourceName) {
+      room.episodes.push({
+        id: "main",
+        name: room.sourceName,
+        bytes: room.sourceBytes ?? 0,
+        durationSec: room.durationSec ?? 0,
+        segments: room.segments ?? 0,
+        bitrateKbps: room.bitrateKbps ?? 0,
+        status: room.segments > 0 ? "ready" : (room.status === "failed" ? "failed" : "transcoding"),
+        createdAt: room.createdAt,
+      });
+      room.currentEpisodeId = "main";
     }
     rooms.set(room.id, room);
   }
@@ -210,6 +251,9 @@ export function createRoom({ title, ownerToken, visibility, password }) {
     ownerToken: ownerToken ?? crypto.randomBytes(16).toString("hex"),
     createdAt: Date.now(),
     status: "created",
+    // One room can hold a few videos; the host picks which one is screening.
+    episodes: [],
+    currentEpisodeId: null,
     sourceName: null,
     sourceBytes: 0,
     durationSec: 0,
@@ -303,9 +347,9 @@ export function updateRoom(id, patch) {
 }
 
 /** Drop transcoded output, keeping the source so the owner can retry. */
-export function discardOutput(id) {
+export function discardOutput(id, episodeId = null) {
   try {
-    fs.rmSync(hlsDir(id), { recursive: true, force: true });
+    fs.rmSync(hlsDir(id, episodeId), { recursive: true, force: true });
   } catch (error) {
     log(`failed to discard output for ${id}: ${error.message}`);
   }

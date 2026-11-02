@@ -122,6 +122,8 @@
         <owner-panel id="owner" hidden>
           <h2>房主</h2>
 
+          <div class="eps" id="episodeList"></div>
+
           <div class="row" id="uploadRow">
             <input type="file" id="file" accept="video/*,.mkv,.mp4,.webm,.mov,.avi,.ts,.m4v" />
             <button id="upload" type="button">上传并处理</button>
@@ -227,6 +229,7 @@
       const endButton = document.getElementById("end");
       const removeButton = document.getElementById("remove");
       const uploadRow = document.getElementById("uploadRow");
+      const episodeList = document.getElementById("episodeList");
       const ownerHint = document.getElementById("ownerHint");
       const ownerError = document.getElementById("ownerError");
 
@@ -289,7 +292,38 @@
         uploadRow.hidden = !token;
         removeButton.hidden = !token;
 
-        const busy = ["uploading", "transcoding", "queued"].includes(room.status);
+        const episodes = room.episodes ?? [];
+        const processing = episodes.some((episode) => episode.status === "transcoding");
+        episodeList.innerHTML =
+          episodes.length === 0
+            ? '<p class="hint">还没有片源，先上传一个。</p>'
+            : episodes
+                .map((episode) => {
+                  const label =
+                    episode.status === "ready"
+                      ? `${Math.round((episode.durationSec ?? 0) / 60)} 分钟 · ${episode.segments ?? 0} 分片`
+                      : episode.status === "failed"
+                        ? "处理失败"
+                        : "处理中";
+                  const action = episode.current
+                    ? '<span class="ep-flag">放映中</span>'
+                    : episode.status === "ready"
+                      ? `<button type="button" data-episode="${escapeHtml(episode.id)}">播放这一集</button>`
+                      : "";
+                  const canDelete = Boolean(token) && !episode.current && episode.status !== "transcoding";
+                  const remove = canDelete
+                    ? `<button type="button" class="ep-del" data-delete-episode="${escapeHtml(episode.id)}" title="删除这一集">删</button>`
+                    : "";
+                  return `<div class="ep${episode.current ? " is-current" : ""}">
+                    <span class="ep-name" title="${escapeHtml(episode.name)}">${escapeHtml(episode.name)}</span>
+                    <span class="ep-meta">${label}</span>
+                    ${action}${remove}
+                  </div>`;
+                })
+                .join("");
+        uploadRow.hidden = !token || episodes.length >= 3;
+
+        const busy = ["uploading", "transcoding", "queued"].includes(room.status) || processing;
         uploadButton.disabled = busy;
         // Ready to begin, already running (restart), or finished (replay): all
         // three can start a screening; the button just says which it is.
@@ -853,6 +887,35 @@
           refreshRoom();
         }
       }
+
+      // Pick a different episode: same endpoint as starting, so everyone re-anchors
+      // to the beginning of the newly chosen one.
+      episodeList.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-episode]");
+        if (!button) return;
+        button.disabled = true;
+        await ownerRequest("/start", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ episodeId: button.dataset.episode }),
+        }).catch(() => {});
+        window.__screening?.refreshRoom?.();
+        refreshRoom();
+      });
+
+      episodeList.addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-delete-episode]");
+        if (!button) return;
+        if (!confirm("删除这一集？文件会一起删掉。")) return;
+        button.disabled = true;
+        const response = await ownerRequest(`/episodes/${button.dataset.deleteEpisode}`, { method: "DELETE" }).catch(() => null);
+        if (response && !response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          ownerError.textContent = payload.error ?? "删除失败";
+        }
+        window.__screening?.refreshRoom?.();
+        refreshRoom();
+      });
 
       startButton.addEventListener("click", () => start(0));
       startDelayButton.addEventListener("click", () => start(10));

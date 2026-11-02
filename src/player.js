@@ -78,7 +78,9 @@ const roomId = (() => {
   return null;
 })();
 
-const MANIFEST = roomId ? `/media/${roomId}/hls/index.m3u8` : "/hls/stream/index.m3u8";
+// Replaced at runtime when the host switches episodes: each episode has its own
+// HLS directory, so the URL is part of the room state, not a constant.
+let manifestUrl = roomId ? `/media/${roomId}/hls/index.m3u8` : "/hls/stream/index.m3u8";
 // Per-room swarm: viewers of different rooms must never exchange segments.
 const SWARM_ID = roomId ? `hitsz-room-${roomId}` : "hitsz-screening";
 
@@ -511,8 +513,16 @@ async function refreshRoom() {
       footer.textContent = parts.join(" · ");
     }
 
+    // Episode switch: a different media base means a different manifest.
+    const nextManifest = roomState?.mediaBase ? `${roomState.mediaBase}index.m3u8` : null;
+    if (nextManifest && nextManifest !== manifestUrl) {
+      manifestUrl = nextManifest;
+      sourceLoaded = true;
+      hls.loadSource(manifestUrl);
+    }
+
     if (roomState?.status === "live" && hls.url === undefined) {
-      hls.loadSource(MANIFEST);
+      hls.loadSource(manifestUrl);
     }
   } catch {
     /* keep the last known state */
@@ -525,7 +535,8 @@ let sourceLoaded = false;
 function loadSource() {
   if (sourceLoaded) return;
   sourceLoaded = true;
-  hls.loadSource(MANIFEST);
+  if (roomState?.mediaBase) manifestUrl = `${roomState.mediaBase}index.m3u8`;
+  hls.loadSource(manifestUrl);
 }
 
 video.addEventListener("loadedmetadata", () => {
