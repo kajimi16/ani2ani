@@ -81,6 +81,18 @@
 
             <p class="pause-note" id="pauseNote" hidden>房主暂停了！</p>
 
+            <div class="vote" id="vote" hidden>
+              <span class="vote-fill" aria-hidden="true"></span>
+              <span class="vote-text" id="voteText"></span>
+              <span class="vote-timer" id="voteTimer">30</span>
+              <span class="vote-actions">
+                <button class="vote-yes" type="button" data-vote="yes">同意</button>
+                <button class="vote-no" type="button" data-vote="no">反对</button>
+              </span>
+            </div>
+
+            <p class="vote-toast" id="voteToast" hidden></p>
+
             <div class="sync-bar" id="syncBar" hidden>
               <span id="syncBarText">与房主不同步</span>
               <button id="syncBarAction" type="button">对齐到房主</button>
@@ -105,6 +117,7 @@
             <button class="d-act" type="button" data-copy-link>复制链接</button>
             <button class="d-act" type="button" data-reload>重新载入</button>
             <a class="d-act" href="/">回到首页</a>
+            <button class="d-act d-act-vote" id="voteStart" type="button" hidden>申请成为房主</button>
           </div>
         </section>
 
@@ -458,16 +471,17 @@
       let claimBackoffMs = 1500;
       let myPeerId = null;
       async function ensureHost(room) {
-        // Two recovery paths, deliberately different:
-        //  - a fresh room (never assigned) is claimed by its owner only;
-        //  - a leaderless room (host timed out) may be claimed by anyone still
-        //    watching, because otherwise the whole room is stuck behind a frozen
-        //    hostRef with no way out.
+        // A vacant seat is filled in exactly two ways now:
+        //  - a fresh room (never assigned) by its owner, who holds the token;
+        //  - a room whose host walked away by a vote (75% of the room).
+        // Followers must NOT grab a leaderless seat on their own: that raced the
+        // vote away (hostAway went false within a poll) and made one viewer host
+        // without anyone agreeing.
         if (claiming || Date.now() < claimCooldownUntil) return;
         const unassigned = !room.hostPeerId;
         const leaderless = Boolean(room.hostPeerId) && room.hostAway;
         if (!unassigned && !leaderless) return;
-        if (unassigned && !token) return;
+        if (!token) return;
         myPeerId = window.__screening?.stats().peerId ?? myPeerId;
         if (leaderless && myPeerId === room.hostPeerId) return;
         const me = window.__screening;
@@ -537,6 +551,18 @@
           .map((person) => `<option value="${person.peerId}">${escapeHtml(person.name || person.peerId.slice(-4))}</option>`)
           .join("");
         hostTransferGo.disabled = hostTransfer.options.length === 0;
+
+        // Poll fallback for the vote: the socket carries the live updates, but a
+        // client that reconnects (or joined mid-vote) learns the state here.
+        const canApply = Boolean(room.hostAway) && !iAmHost && !room.vote;
+        voteStart.hidden = !canApply;
+        if (room.vote) showVote(room.vote);
+        else if (voteShownId && votedId !== voteShownId) hideVote();
+
+        if (room.voteResult && room.voteResult.id !== lastToastId) {
+          lastToastId = room.voteResult.id;
+          showVoteToast(room.voteResult);
+        }
       }
 
       hostTransferGo.addEventListener("click", async () => {
@@ -726,6 +752,140 @@
         location.href = "/";
       });
 
+
+      /* ------------------------------------------------------------- 房主投票 */
+
+      // Identity for the ballot: the same stable id the player reports, so votes
+      // survive a refresh the way the participant list does.
+      const viewerId = (() => {
+        try {
+          const saved = localStorage.getItem("viewer-id");
+          if (saved) return saved;
+          const bytes = new Uint8Array(16);
+          crypto.getRandomValues(bytes);
+          const id = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+          localStorage.setItem("viewer-id", id);
+          return id;
+        } catch {
+          return null;
+        }
+      })();
+
+      const voteEl = document.getElementById("vote");
+      const voteText = document.getElementById("voteText");
+      const voteTimer = document.getElementById("voteTimer");
+      const voteStart = document.getElementById("voteStart");
+      const voteToast = document.getElementById("voteToast");
+      let voteShownId = null;
+      let votedId = null;
+      let voteTicker = null;
+      let toastTimer = null;
+      let lastToastId = null;
+
+      function peerId() {
+        return window.__screening?.stats?.().peerId ?? null;
+      }
+
+      function hideVote() {
+        clearInterval(voteTicker);
+        voteTicker = null;
+        voteEl.hidden = true;
+        voteEl.classList.remove("chose-yes", "chose-no");
+        voteShownId = null;
+      }
+
+      function tickVote(vote) {
+        const left = Math.max(0, Math.ceil((vote.endsAt - Date.now()) / 1000));
+        voteTimer.textContent = String(left);
+        if (left === 0) clearInterval(voteTicker);
+      }
+
+      function showVote(vote) {
+        if (!vote || votedId === vote.id) return;
+        if (voteShownId === vote.id) {
+          // Same vote, another ballot landed: only the counter changes, so the
+          // slide-in must not replay.
+          tickVote(vote);
+          return;
+        }
+        voteShownId = vote.id;
+        voteEl.hidden = false;
+        voteEl.classList.remove("chose-yes", "chose-no");
+        voteText.textContent = `${vote.candidateName || "有人"} 申请成为房主`;
+        tickVote(vote);
+        clearInterval(voteTicker);
+        voteTicker = setInterval(() => tickVote(vote), 500);
+      }
+
+      async function castVote(approve) {
+        const vote = voteShownId;
+        if (!vote) return;
+        votedId = vote;
+        // The chosen colour spreads across the banner, which then lingers a
+        // second before going away.
+        voteEl.classList.add(approve ? "chose-yes" : "chose-no");
+        try {
+          await fetch(`/api/rooms/${roomId}/vote/cast`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ approve, peerId: peerId(), viewerId }),
+          });
+        } catch {
+          /* the result broadcast still arrives */
+        }
+        setTimeout(hideVote, 1000);
+      }
+
+      voteEl.querySelectorAll("[data-vote]").forEach((button) =>
+        button.addEventListener("click", () => castVote(button.dataset.vote === "yes")),
+      );
+
+      function showVoteToast(result) {
+        const won = Boolean(result?.approved);
+        voteToast.textContent = won
+          ? `${result.candidateName || "有人"} 成为了房主`
+          : `${result.candidateName || "有人"} 没能成为房主`;
+        voteToast.classList.toggle("is-pass", won);
+        voteToast.classList.toggle("is-fail", !won);
+        voteToast.hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          voteToast.hidden = true;
+        }, 4200);
+      }
+
+      document.addEventListener("vote-state", (event) => showVote(event.detail));
+      document.addEventListener("vote-result", (event) => {
+        // If this screen just cast a ballot, let the colour flood finish and the
+        // banner linger its second before it goes; otherwise the result would cut
+        // the animation off mid-way.
+        const casting = !voteEl.hidden && (voteEl.classList.contains("chose-yes") || voteEl.classList.contains("chose-no"));
+        if (casting) setTimeout(() => {
+          hideVote();
+          showVoteToast(event.detail);
+        }, 900);
+        else {
+          hideVote();
+          showVoteToast(event.detail);
+        }
+      });
+
+      voteStart.addEventListener("click", async () => {
+        voteStart.disabled = true;
+        try {
+          const response = await fetch(`/api/rooms/${roomId}/vote`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ peerId: peerId(), viewerId }),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            showVoteToast({ candidateName: payload.error ?? "发起失败", approved: false });
+          }
+        } finally {
+          voteStart.disabled = false;
+        }
+      });
 
       /* ----------------------------------------------------------- 明暗主题 */
 

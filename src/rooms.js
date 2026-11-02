@@ -105,10 +105,12 @@ function publicRoom(room) {
 
 export function save() {
   ensureDirs();
-  const payload = [...rooms.values()].map((room) => ({
-    ...room,
-    progress: room.status === "transcoding" ? null : room.progress,
-  }));
+  const payload = [...rooms.values()].map((room) => {
+    // A host vote is live state with a 30 s clock, not something to resurrect
+    // after a restart; the candidate has to ask again.
+    const { vote, ...rest } = room;
+    return { ...rest, progress: room.status === "transcoding" ? null : room.progress };
+  });
   const temporary = `${INDEX_FILE}.tmp`;
   fs.writeFileSync(temporary, JSON.stringify(payload, null, 2));
   fs.renameSync(temporary, INDEX_FILE);

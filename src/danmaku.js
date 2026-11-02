@@ -126,6 +126,16 @@ export function createDanmaku({ roomId, name, peerId, videoTime, playerContainer
     if (payload.type === "danmaku" && payload.item) {
       render(payload.item);
       appendSidebar(payload.item);
+      return;
+    }
+    // Host votes ride the same socket so the countdown starts on every screen at
+    // the same moment instead of up to one poll later.
+    if (payload.type === "vote") {
+      document.dispatchEvent(new CustomEvent("vote-state", { detail: payload.vote }));
+      return;
+    }
+    if (payload.type === "vote-result") {
+      document.dispatchEvent(new CustomEvent("vote-result", { detail: payload.result }));
     }
   }
 
