@@ -79,6 +79,8 @@
               </div>
             </stage-frame>
 
+            <p class="pause-note" id="pauseNote" hidden>房主暂停了！</p>
+
             <div class="sync-bar" id="syncBar" hidden>
               <span id="syncBarText">与房主不同步</span>
               <button id="syncBarAction" type="button">对齐到房主</button>
@@ -401,6 +403,17 @@
 
       const screening = () => window.__screening;
       let latestRoom = null;
+
+      // The host paused: say so, because the picture simply freezing looks like a
+      // broken stream. The player only emits these on a transition, so the note
+      // is not re-rendered every poll.
+      const pauseNote = document.getElementById("pauseNote");
+      document.addEventListener("host-paused", () => {
+        pauseNote.hidden = false;
+      });
+      document.addEventListener("host-resumed", () => {
+        pauseNote.hidden = true;
+      });
 
       // Two different reasons to show the bar: the viewer scrubbed away, or a
       // stall left them behind. The first offers no "dismiss", because dismissing

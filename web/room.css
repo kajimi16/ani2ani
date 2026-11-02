@@ -481,6 +481,46 @@ body.studio stage-frame {
   display: none;
 }
 
+/* Host-paused notice: sits over the picture, never over the controls. */
+.pause-note {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  z-index: 3;
+  animation: pause-note-in 0.22s ease-out;
+}
+
+.pause-note[hidden] {
+  display: none;
+}
+
+@keyframes pause-note-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pause-note {
+    animation: none;
+  }
+}
+
 .sync-bar button {
   padding: 4px 12px;
   border: 0;

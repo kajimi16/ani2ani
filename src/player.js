@@ -305,8 +305,25 @@ function reportLag(lag) {
  * room stutters against a leader who is simply paused. Playback state is part of
  * what "synchronised" means.
  */
+let lastHostPlaying = null;
+
 function applyHostPlayState() {
   if (!roomId || isHost() || syncMode === "free" || !hostRef) return;
+
+  // Announce the transition, not the state: a 1 s poll would otherwise fire a
+  // "paused" event every tick the host stays paused. The first observation is
+  // special — somebody who joins *while* the host is paused still needs telling,
+  // otherwise they stare at a frozen frame and assume the stream is broken.
+  const hostPlaying = Boolean(hostRef.playing);
+  if (lastHostPlaying === null) {
+    if (!hostPlaying && roomState?.status === "live") {
+      document.dispatchEvent(new CustomEvent("host-paused"));
+    }
+  } else if (lastHostPlaying !== hostPlaying) {
+    document.dispatchEvent(new CustomEvent(hostPlaying ? "host-resumed" : "host-paused"));
+  }
+  lastHostPlaying = hostPlaying;
+
   if (hostRef.playing) {
     if (video.paused && !userPaused) {
       followingPause = false;
@@ -319,7 +336,10 @@ function applyHostPlayState() {
 }
 
 function syncTick() {
-  if (!roomId || isHost() || !hostRef) return;
+  if (!roomId || isHost() || !hostRef) {
+    lastHostPlaying = null;
+    return;
+  }
   const target = hostTarget();
   if (target === null) return;
 
@@ -415,6 +435,11 @@ async function refreshRoom() {
     if (!response.ok) return;
     const payload = await response.json();
     roomState = payload.room;
+    // A room that goes live while this page is already open has to start the
+    // stream here. Loading only at startup meant the host — the one who pressed
+    // "开始放映" — sat on the waiting veil until a manual reload, while viewers who
+    // opened the link afterwards loaded normally. `loadSource` is idempotent.
+    if (roomState?.status === "live") loadSource();
     const previousHost = hostPeerId;
     hostPeerId = roomState?.hostPeerId ?? null;
     hostName = roomState?.hostName ?? null;
