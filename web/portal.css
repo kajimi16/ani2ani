@@ -422,21 +422,6 @@ body.portal :focus-visible {
   color: rgba(255, 255, 255, 0.72);
 }
 
-.p-focus-strip {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 2px 0;
-  font-size: 12px;
-  color: var(--p-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.p-focus-cta {
-  margin-left: auto;
-  color: var(--p-pink-text);
-}
-
 .p-empty-focus {
   display: grid;
   place-items: center;

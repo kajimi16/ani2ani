@@ -237,10 +237,13 @@
         return `${(bytes / 1e6).toFixed(0)} MB`;
       }
 
-      function setVeil(show, title, text) {
+      function setVeil(show, title, text = "") {
         veil.hidden = !show;
         if (title) veilTitle.textContent = title;
-        if (text) veilText.textContent = text;
+        // Always assign: a call with no text must clear the previous line rather
+        // than leave a sentence from an earlier state on screen.
+        veilText.textContent = text;
+        veilText.hidden = text === "";
       }
 
       function render(room) {
@@ -251,7 +254,7 @@
         if (room.status !== lastStatus) {
           lastStatus = room.status;
           if (room.status === "ready") {
-            setVeil(true, "片源已就绪", "房主点击「开始放映」后，这里会自动从同一帧开始播放。");
+            setVeil(true, "等待房主开播");
           } else if (room.status === "live") {
             setVeil(false);
           } else if (room.status === "ended") {
@@ -259,7 +262,7 @@
           } else if (room.status === "failed") {
             setVeil(true, "处理失败", room.error ?? "请让房主重新上传。");
           } else {
-            setVeil(true, "等待房主准备片源", "上传与处理期间，这个页面开着就行。");
+            setVeil(true, "等待房主准备片源");
           }
         }
 

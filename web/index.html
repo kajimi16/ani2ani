@@ -307,14 +307,8 @@
             </span>
             <div class="p-focus-bottom">
               <h2>${escapeHtml(room.title || "未命名放映")}</h2>
-              <p>${room.hostName ? `房主 ${escapeHtml(room.hostName)}` : "暂无房主"} · ${escapeHtml(room.sourceName ?? "未上传片源")}</p>
+              <p>${room.hostName ? `房主 ${escapeHtml(room.hostName)}` : "暂无房主"}</p>
             </div>
-          </div>
-          <div class="p-focus-strip">
-            <span>${room.bitrateKbps ? `${room.bitrateKbps} kbps` : "码率未知"}</span>
-            <span>${room.segments ? `${room.segments} 分片` : "无分片"}</span>
-            <span>${room.durationSec ? `${Math.round(room.durationSec / 60)} 分钟` : "时长未知"}</span>
-            <span class="p-focus-cta">进入放映 ›</span>
           </div>
         </a>`;
       }
