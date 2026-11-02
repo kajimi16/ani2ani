@@ -1632,3 +1632,44 @@ html[data-theme="dark"] body.studio .d-picker-list button:hover {
   color: var(--accent-deep);
 }
 
+
+/* ------------------------------------------- participant stats (host only) */
+
+.stat-pop {
+  position: fixed;
+  z-index: 70;
+  min-width: 240px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--card-shadow);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.stat-pop[hidden] {
+  display: none;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 10px;
+  padding: 3px 0;
+  align-items: baseline;
+}
+
+.stat-row dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.stat-row dd {
+  margin: 0;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}

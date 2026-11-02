@@ -102,19 +102,6 @@
             <button class="quiet" id="syncBarDismiss" type="button">留在这里</button>
           </div>
 
-          <!-- Host-only diagnostics: ratios, drift and buffer targets are operating
-               numbers, not something a viewer should have to read. Hidden by default
-               so viewers never see them even before the first host check runs. -->
-          <dl class="stat-line" id="statLine" hidden>
-            <div><dt>P2P</dt><dd id="p2p">0.0%</dd></div>
-            <div><dt>观众</dt><dd id="peers">0</dd></div>
-            <div><dt>下行</dt><dd id="down">0 / 0 MiB</dd></div>
-            <div><dt>上行</dt><dd id="up">0.0 MiB</dd></div>
-            <div><dt>分片</dt><dd id="segments">0 / 0</dd></div>
-            <div><dt>同步</dt><dd id="sync">等待房主开始</dd></div>
-            <div><dt>角色</dt><dd id="role">—</dd></div>
-          </dl>
-
           <div class="d-actions">
             <button class="d-act" type="button" data-copy-link>复制链接</button>
             <button class="d-act" type="button" data-reload>重新载入</button>
@@ -201,6 +188,8 @@
         </div>
       </div>
     </dialog>
+
+    <div class="stat-pop" id="statPop" hidden></div>
 
     <footer class="d-footer"><p id="footerMeta"></p></footer>
     <p id="status" class="sr-only"></p>
@@ -562,7 +551,7 @@
           .map((person) => {
             const label = person.name || `观众 ${person.peerId.slice(-4)}`;
             const tag = person.isHost ? '<em class="tag">房主</em>' : "";
-            return `<li${person.isHost ? ' class="is-host"' : ""}><span>${escapeHtml(label)}</span>${tag}</li>`;
+            return `<li data-peer="${escapeHtml(person.peerId)}"${person.isHost ? ' class="is-host"' : ""}><span>${escapeHtml(label)}</span>${tag}</li>`;
           })
           .join("");
 
@@ -642,6 +631,76 @@
         if ((latestRoom?.participants ?? []).length < 2) return;
         event.preventDefault();
         event.returnValue = "";
+      });
+
+      /* ------------------------------------------------ 参与者悬浮数据卡 */
+
+      // The host is the only one who needs per-person numbers, and they are only
+      // interesting while looking at a specific person: fetch on hover, show next
+      // to the row, dismiss on leave.
+      const statPop = document.getElementById("statPop");
+
+      function formatMiB(bytes) {
+        return `${(Number(bytes || 0) / (1024 * 1024)).toFixed(1)} MiB`;
+      }
+
+      function statRows(client) {
+        if (!client) return [["数据", "这个人的采样还没到"]];
+        const downAll = (client.downP2P ?? 0) + (client.downHTTP ?? 0);
+        const ratio = downAll > 0 ? ((client.downP2P / downAll) * 100).toFixed(1) : "0.0";
+        const drift = Number(client.syncDrift ?? 0);
+        return [
+          ["P2P 占比", `${ratio}%`],
+          ["下行", `${formatMiB(client.downP2P)} 来自 peer / ${formatMiB(client.downHTTP)} 来自服务器`],
+          ["上行", formatMiB(client.upP2P)],
+          ["分片", `${client.segmentsP2P ?? 0} 来自 peer / ${client.segmentsHTTP ?? 0} 来自服务器`],
+          ["位置", `${Math.round(client.videoTime ?? 0)}s · 漂移 ${drift >= 0 ? "+" : ""}${drift.toFixed(1)}s`],
+          ["连接", `${client.peers ?? 0} 个 peer`],
+          ["角色", client.lead ? "领播种子" : "跟随者"],
+        ];
+      }
+
+      function renderStatPop(rows) {
+        statPop.innerHTML = rows
+          .map(([key, value]) => `<div class="stat-row"><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`)
+          .join("");
+      }
+
+      function placeStatPop(event) {
+        const rect = statPop.getBoundingClientRect();
+        const x = Math.min(event.clientX + 16, window.innerWidth - rect.width - 12);
+        const y = Math.min(event.clientY + 12, window.innerHeight - rect.height - 12);
+        statPop.style.left = `${Math.max(12, x)}px`;
+        statPop.style.top = `${Math.max(12, y)}px`;
+      }
+
+      let statRequest = 0;
+      peopleList.addEventListener("mouseover", async (event) => {
+        if (!window.__screening?.isHost?.()) return;
+        const row = event.target.closest("li[data-peer]");
+        if (!row || row.contains(event.relatedTarget)) return;
+
+        const ticket = ++statRequest;
+        renderStatPop([["数据", "读取中…"]]);
+        statPop.hidden = false;
+        placeStatPop(event);
+
+        try {
+          const response = await fetch(`/api/stats?room=${roomId}`, { cache: "no-store" });
+          const payload = await response.json();
+          if (ticket !== statRequest) return; // a newer hover won
+          const client = (payload.window?.clients ?? []).find((entry) => entry.peerId === row.dataset.peer);
+          renderStatPop(statRows(client));
+        } catch {
+          if (ticket === statRequest) renderStatPop([["数据", "读取失败"]]);
+        }
+        placeStatPop(event);
+      });
+
+      peopleList.addEventListener("mouseout", (event) => {
+        if (event.relatedTarget && statPop.contains(event.relatedTarget)) return;
+        statRequest += 1;
+        statPop.hidden = true;
       });
 
       /* ---------------------------------------------------------- danmaku */
