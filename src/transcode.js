@@ -134,8 +134,10 @@ export function startTranscode({ sourceFile, outputDir, durationSec, bitrateKbps
         // The portal card needs a cover. Failure here is cosmetic, so it never
         // fails the room: a missing poster just falls back to a plain card.
         const poster = path.join(path.dirname(outputDir), "poster.jpg");
+        const second = path.join(outputDir, "seg_0001.ts");
         const first = path.join(outputDir, "seg_0000.ts");
-        if (fs.existsSync(first)) await extractPoster(first, poster);
+        const source = fs.existsSync(second) ? second : first;
+        if (fs.existsSync(source)) await extractPoster(source, poster);
         resolve({ ok: true, segments });
       } else {
         const reason = stderrTail.trim().split("\n").slice(-3).join(" / ") || `exit code ${code}`;
@@ -171,6 +173,11 @@ export function countSegments(outputDir) {
  * wants both has to run while the segments are the only artifact left.
  * `scale=w=min(640,iw)` never upscales, and the comma is escaped because ffmpeg
  * splits filter arguments on unescaped commas.
+ *
+ * No `-ss`: a segment is an independent GOP, so seeking into it lands where the
+ * decoder has no reference frames and produces nothing ("co located POCs
+ * unavailable"). Frame zero is a keyframe and always decodes; callers pass the
+ * second segment when they want to skip a fade-in.
  */
 export function extractPoster(segmentFile, posterFile) {
   return new Promise((resolve) => {
@@ -179,7 +186,6 @@ export function extractPoster(segmentFile, posterFile) {
       [
         "-v", "error",
         "-y",
-        "-ss", "1",
         "-i", segmentFile,
         "-frames:v", "1",
         "-vf", "scale=w=min(640\\,iw):h=-2",

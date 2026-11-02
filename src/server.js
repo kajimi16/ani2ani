@@ -58,6 +58,71 @@ const ROOM_CREATE_LIMIT = Number(process.env.ROOM_CREATE_LIMIT ?? 6);
 // halves the storage available for screens. Kept only when explicitly asked.
 const KEEP_SOURCE = process.env.ROOM_KEEP_SOURCE === "1";
 const DEFAULT_ROOM_ID = "default";
+/* ------------------------------------------------------- space & retention */
+
+// Two thresholds, deliberately different:
+//   - normally a room nobody has touched for 48 h is deleted;
+//   - when the volume drops under 20 GB free, 6 h of silence is enough.
+// The low-disk rule is what keeps the machine from filling up during a run of
+// screenings, and it is the reason the portal never needs to show a byte count.
+const ROOM_IDLE_HOURS = positive(process.env.ROOM_IDLE_HOURS, 48);
+const ROOM_LOW_DISK_IDLE_HOURS = positive(process.env.ROOM_LOW_DISK_IDLE_HOURS, 6);
+const ROOM_LOW_DISK_GB = positive(process.env.ROOM_LOW_DISK_GB, 20);
+
+function positive(raw, fallback) {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function isLowDisk() {
+  return diskInfo().freeBytes < ROOM_LOW_DISK_GB * 1e9;
+}
+
+/** When this room last had any sign of life: creation, playback, or a peer. */
+function roomLastActive(room, now) {
+  let last = Math.max(room.createdAt ?? 0, room.startedAt ?? 0, room.endedAt ?? 0, room.hostRef?.at ?? 0);
+  for (const entry of clients.values()) {
+    if (entry.roomId === room.id) last = Math.max(last, entry.lastSeen);
+  }
+  return last;
+}
+
+/**
+ * Delete rooms nobody is using.
+ *
+ * Never while an upload or transcode is in flight, and never while somebody is
+ * connected: losing a job halfway through, or kicking a viewer out to reclaim
+ * space, is worse than waiting for the next sweep. Called on a timer and once
+ * at startup, so a restart also reconciles a disk that filled while down.
+ */
+function sweepIdleRooms(now = Date.now()) {
+  const lowDisk = isLowDisk();
+  const graceMs = (lowDisk ? ROOM_LOW_DISK_IDLE_HOURS : ROOM_IDLE_HOURS) * 3600 * 1000;
+  let removed = 0;
+
+  for (const view of listRooms()) {
+    const room = getRoom(view.id);
+    if (!room) continue;
+    if (busyRooms.has(room.id) || transcodeJobs.has(room.id)) continue;
+
+    const watching = [...clients.values()].some(
+      (entry) => entry.roomId === room.id && now - entry.lastSeen < LIVE_WINDOW_MS,
+    );
+    if (watching) continue;
+    if (now - roomLastActive(room, now) <= graceMs) continue;
+
+    transcodeJobs.get(room.id)?.kill();
+    transcodeJobs.delete(room.id);
+    removeRoom(room.id);
+    removed += 1;
+  }
+
+  if (removed > 0) {
+    log(`retention: removed ${removed} room(s) idle > ${graceMs / 3600000} h${lowDisk ? " (low disk)" : ""}`);
+  }
+  return removed;
+}
+
 const LIVE_WINDOW_MS = 15_000;
 // Deliberately longer than LIVE_WINDOW_MS. A follower going quiet for a moment is
 // noise; a host going quiet means the screening has no leader, and taking the room
@@ -801,7 +866,12 @@ async function handle(req, res) {
     // Private rooms are unlisted by definition: the only way in is the id plus
     // the password, so they must not be enumerable from the portal.
     const visible = listRooms().filter((room) => room.visibility !== "private");
-    return json(res, 200, { rooms: visible.map(roomView), disk: diskInfo() });
+    // Coarse on purpose: exact free bytes and the data path are operator
+    // details, and a viewer only needs to know whether the box is healthy.
+    return json(res, 200, {
+      rooms: visible.map(roomView),
+      storage: { state: isLowDisk() ? "low" : "ok" },
+    });
   }
 
   if (pathname === "/api/rooms" && req.method === "POST") {
@@ -935,15 +1005,16 @@ async function handle(req, res) {
       // A chunked upload has no Content-Length; assume the per-upload cap.
       const want = declared || MAX_UPLOAD_BYTES;
       if (!canAccept(estimatedFootprint(want))) {
-        const disk = diskInfo();
+        // The numbers go to the log, not to the browser: a viewer does not need
+        // the server's free space, and publishing it invites either worry or
+        // probing. The operator sees the detail in the control log.
+        log(
+          `refused upload for ${room.id}: needs ${(estimatedFootprint(want) / 1e9).toFixed(2)} GB, ` +
+            `free ${(diskInfo().freeBytes / 1e9).toFixed(2)} GB`,
+        );
         return json(res, 507, {
           ok: false,
-          error:
-            `not enough disk for this room: source ${(want / 1e9).toFixed(2)} GB ` +
-            `+ segments ≈ ${(estimatedFootprint(want) / 1e9).toFixed(2)} GB, ` +
-            `free ${(disk.freeBytes / 1e9).toFixed(2)} GB, ` +
-            `reserve ${(disk.reserveBytes / 1e9).toFixed(2)} GB. ` +
-            `Delete an old room or upload a shorter file.`,
+          error: "服务器空间不足，先删掉一个旧房间，或者传一个短一点的片子。",
         });
       }
 
@@ -1080,6 +1151,9 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 loadRooms();
+// Runs before the first request so a restart immediately reconciles the disk.
+sweepIdleRooms();
+setInterval(() => sweepIdleRooms(), 60_000).unref();
 
 server.listen(API_PORT, "127.0.0.1", () => log(`api + tracker on http://127.0.0.1:${API_PORT}`));
 

@@ -29,7 +29,6 @@ const log = (message) => process.stderr.write(`[${new Date().toISOString()}] roo
 /** @type {Map<string, Room>} */
 const rooms = new Map();
 
-export const IDLE_GRACE_MS = 6 * 60 * 60 * 1000;
 
 function ensureDirs() {
   fs.mkdirSync(ROOMS_DIR, { recursive: true });
@@ -57,7 +56,6 @@ export function diskInfo() {
   return {
     freeBytes: freeDiskBytes(),
     reserveBytes: DISK_RESERVE_BYTES,
-    dataRoot: DATA_ROOT,
   };
 }
 
@@ -319,17 +317,6 @@ export function removeRoom(id) {
   save();
   log(`deleted room ${id}`);
   return true;
-}
-
-/** Rooms nobody has touched for a long time, oldest first. */
-export function idleRooms(now = Date.now(), graceMs = IDLE_GRACE_MS) {
-  return [...rooms.values()]
-    .filter((room) => {
-      const last = Math.max(room.createdAt, room.startedAt ?? 0, room.endedAt ?? 0);
-      const terminal = ["ready", "failed", "ended"].includes(room.status);
-      return terminal && now - last > graceMs;
-    })
-    .sort((a, b) => a.createdAt - b.createdAt);
 }
 
 export { DATA_ROOT, ROOMS_DIR };

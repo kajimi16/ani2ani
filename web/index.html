@@ -30,7 +30,6 @@
         </form>
 
         <div class="p-actions">
-          <span class="p-capacity" id="capacity" title="本机可用空间">—</span>
           <form class="p-nameform" id="nameForm" hidden>
             <input id="nameInline" type="text" maxlength="24" placeholder="你的名字" aria-label="你的名字" />
           </form>
@@ -86,31 +85,30 @@
     <dialog class="p-dialog" id="dialog">
       <form method="dialog" class="p-dialog-body" id="createForm">
         <h2 id="dialogTitle">创建房间</h2>
-        <p class="p-dialog-lede">上传想要放映的片源即可创建属于你的放映室</p>
         <label>
           <span>房间标题</span>
-          <input id="title" type="text" maxlength="80" placeholder="今晚放什么" />
+          <input id="title" type="text" maxlength="80" />
         </label>
         <label>
           <span>你的名字</span>
-          <input id="name" type="text" maxlength="24" placeholder="显示在观看列表里" />
+          <input id="name" type="text" maxlength="24" />
         </label>
         <fieldset class="p-visibility">
           <legend>谁能进</legend>
           <label class="p-radio">
             <input type="radio" name="visibility" value="public" checked />
-            <span><b>公开</b><em>出现在首页，任何人可进</em></span>
+            <span>公开</span>
           </label>
           <label class="p-radio">
             <input type="radio" name="visibility" value="private" />
-            <span><b>私密</b><em>不上首页，凭密码进入</em></span>
+            <span>私密</span>
           </label>
         </fieldset>
         <label id="passwordRow" hidden>
           <span>房间密码</span>
-          <input id="password" type="password" maxlength="32" placeholder="4–32 个字符，进房间时要输入" />
+          <input id="password" type="password" maxlength="32" placeholder="4–32 个字符" />
         </label>
-        <p class="p-hint" id="dialogHint">名字只存在这台设备上。</p>
+        <p class="p-hint" id="dialogHint" hidden></p>
         <div class="p-dialog-actions">
           <button class="p-quiet" type="button" data-close-dialog>取消</button>
           <button class="p-primary" id="create" type="submit">创建房间</button>
@@ -172,7 +170,6 @@
     </dialog>
 
     <script type="module">
-      const capacityEl = document.getElementById("capacity");
       const diskEl = document.getElementById("disk");
       const focusWrap = document.getElementById("focusWrap");
       const sideGrid = document.getElementById("sideGrid");
@@ -204,7 +201,7 @@
         failed: ["失败", "failed"],
       };
 
-      const state = { rooms: [], filter: "all", query: "", shown: PAGE_SIZE, disk: null };
+      const state = { rooms: [], filter: "all", query: "", shown: PAGE_SIZE };
 
       function escapeHtml(value) {
         return String(value ?? "").replace(/[&<>"']/g, (c) =>
@@ -370,13 +367,14 @@
         renderFeed(rooms);
       }
 
-      function renderDisk(disk) {
-        state.disk = disk;
-        if (!disk) return;
-        const free = (disk.freeBytes / 1e9).toFixed(1);
-        const reserve = (disk.reserveBytes / 1e9).toFixed(1);
-        capacityEl.textContent = `${free} GB 可用`;
-        diskEl.innerHTML = `可用 <code>${free} GB</code>，保留 <code>${reserve} GB</code>`;
+      // The server reports a coarse state, not bytes: how much room is left on
+      // the box is an operator concern, and publishing it invites both worry and
+      // probing. Low space also means the retention sweep is running harder.
+      function renderStorage(storage) {
+        const low = storage?.state === "low";
+        diskEl.textContent = low
+          ? "目前服务器空间紧张，会优先清理长期未使用的房间"
+          : "目前服务器空间充足";
       }
 
       async function refresh() {
@@ -384,7 +382,7 @@
           const response = await fetch("/api/rooms", { cache: "no-store" });
           const payload = await response.json();
           state.rooms = payload.rooms ?? [];
-          renderDisk(payload.disk);
+          renderStorage(payload.storage);
           render();
         } catch {
           feedGrid.innerHTML = `<p class="p-feed-end">连不上服务器。</p>`;
@@ -577,7 +575,9 @@
           document.querySelector('input[name="visibility"][value="public"]').checked = true;
           paintVisibility();
           nameInput.value = localStorage.getItem("displayName") || "";
-          dialogHint.textContent = nameInput.value ? "名字只存在这台设备上。" : "名字只存在这台设备上，留空也能看。";
+          // The line is reserved for failures now; nothing to say on open.
+          dialogHint.textContent = "";
+          dialogHint.hidden = true;
           dialog.showModal();
           titleInput.focus();
         }),
@@ -682,6 +682,7 @@
         } catch (error) {
           createButton.disabled = false;
           dialogHint.textContent = `创建失败：${error.message}`;
+          dialogHint.hidden = false;
         }
       });
 

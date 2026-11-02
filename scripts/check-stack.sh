@@ -41,10 +41,12 @@ import json, sys, urllib.request
 with urllib.request.urlopen(f"{sys.argv[1]}/api/rooms", timeout=5) as response:
     payload = json.load(response)
 assert isinstance(payload.get("rooms"), list), payload
-assert "freeBytes" in payload.get("disk", {}), payload
+# Coarse state only: exact bytes and the data path must not leave the server.
+assert payload.get("storage", {}).get("state") in ("ok", "low"), payload
+assert "disk" not in payload, payload
 PY2
 then
-  pass "/api/rooms lists rooms and disk"
+  pass "/api/rooms lists rooms and storage state"
 else
   fail "/api/rooms invalid"
 fi
