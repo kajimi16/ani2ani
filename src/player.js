@@ -83,6 +83,17 @@ const roomId = (() => {
 let manifestUrl = roomId ? `/media/${roomId}/hls/index.m3u8` : "/hls/stream/index.m3u8";
 // Per-room swarm: viewers of different rooms must never exchange segments.
 const SWARM_ID = roomId ? `hitsz-room-${roomId}` : "hitsz-screening";
+// ...and per-episode within the room. The library derives the swarm from the
+// stream's *encoding* (codecs/bitrate/size) and names segments by their sequence
+// number, so two similarly encoded episodes in one room would share an infoHash
+// and `seg_0001` — peers would hand each other the wrong episode. This is read on
+// every loadSource, so switching episodes moves the room to a different swarm.
+let episodeKey = null;
+// The episode this page has been showing. A change is handled by a full reload
+// rather than an in-place switch: a long-lived mobile tab keeps both the HTTP
+// cache (segments are immutable) and the p2p engine's stored segments, and those
+// outlive the code that was supposed to separate them.
+let loadedEpisodeId = null;
 
 const counters = {
   downP2P: 0,
@@ -143,6 +154,8 @@ const hls = new HlsWithP2P({
   p2p: {
     core: {
       swarmId: SWARM_ID,
+      streamSwarmIdBuilder: ({ defaultStreamSwarmId }) =>
+        episodeKey ? `${defaultStreamSwarmId}--ep-${episodeKey}` : undefined,
       announceTrackers: [signalingUrl()],
       // Only the campus-local STUN is advertised: a server-reflexive candidate
       // valid across HITSZ subnets, which mDNS host candidates cannot provide.
@@ -467,7 +480,9 @@ async function refreshRoom() {
       syncMode = "sync";
       statusEl.dataset.phase = "playing";
       seekTo(0);
-      video.play().catch(() => {});
+      // A viewer who arrives while the host is paused must stay paused: starting
+      // playback and letting the next sync tick stop it is a visible glitch.
+      if (isHost() || hostRef?.playing !== false) video.play().catch(() => {});
       if (!isHost()) initialAligned = false;
       document.dispatchEvent(new CustomEvent("sync-mode", { detail: { mode: syncMode } }));
       // The room may have stayed "live" the whole time (the film simply finished),
@@ -513,7 +528,19 @@ async function refreshRoom() {
       footer.textContent = parts.join(" · ");
     }
 
-    // Episode switch: a different media base means a different manifest.
+    // Episode switch: reload the page. Swapping the manifest in place leaves the
+    // old MediaSource buffer, the HTTP cache and the engine's segment store full
+    // of the previous episode — which is exactly the "two videos alternating" the
+    // in-place switch could not shake off on mobile.
+    const nextEpisodeId = roomState?.currentEpisodeId ?? null;
+    if (loadedEpisodeId && nextEpisodeId && nextEpisodeId !== loadedEpisodeId) {
+      statusEl.dataset.episodeSwitched = "1";
+      location.reload();
+      return;
+    }
+    if (nextEpisodeId) loadedEpisodeId = nextEpisodeId;
+
+    episodeKey = nextEpisodeId ?? episodeKey;
     const nextManifest = roomState?.mediaBase ? `${roomState.mediaBase}index.m3u8` : null;
     if (nextManifest && nextManifest !== manifestUrl) {
       manifestUrl = nextManifest;

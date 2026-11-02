@@ -282,6 +282,35 @@ bash scripts/stop.sh      # 干净收掉，无残留
 房间状态仍然是「放映」的状态（created/ready/live/ended），集有自己的 `status`
 （transcoding/ready/failed），所以给正在放映的房间追加第二集时，观众不受影响。
 
+### 每一集有自己的 swarm（否则两集会互相喂片）
+
+p2p-media-loader 的 stream identity 只对**编码参数**做哈希（codecs / 码率 / 分辨率 /
+声道…），分片的 `externalId` 又是**序号**（`0,1,2…`）。于是同一个房间里两集如果编码一致，
+它们会得到同一个 infohash、同一个 `seg_0001` —— peer 之间就会把 A 集的分片发给正在看 B 集的人，
+表现是「两个视频交替播放」。
+
+修法不是在目录名上做区分（那只影响 HTTP 路径），而是用库提供的
+`core.streamSwarmIdBuilder`：
+
+```js
+streamSwarmIdBuilder: ({ defaultStreamSwarmId }) =>
+  episodeKey ? `${defaultStreamSwarmId}--ep-${episodeKey}` : undefined
+```
+
+`episodeKey` 在每次 `loadSource` 之前从 `roomState.currentEpisodeId` 更新，所以切集即换 swarm。
+实测：切集前后 tracker 上的 infohash 发生变化（新 infohash 出现、旧的 peer 数归零）。
+
+但换 swarm 还不够：标签页可能已经挂了很久，它手里的**浏览器 HTTP 缓存**（`.ts` 是
+`immutable`）和 p2p 引擎在 IndexedDB 里的分片存储都还是上一集的。所以在页面里切集不是
+「换清单」而是**整页重载** —— 内存、MediaSource 缓冲、缓存键、swarm 一起归零。
+
+实测：切集后观众页确实重载（页面内变量消失），重载后只请求新集的清单与分片。
+
+重载会带来一个新的 `peerId`，而席位还记在旧的上面。不加处理的话房主要等旧会话老化（15 秒）
+再加去抖才收回座位，这期间全场看到「房主已离开」。所以页面**首次轮询就尝试一次自证**：
+服务端按 `viewerId` 判定「还是同一个人」，是就立刻把席位挪到新 peerId（`selfMoveByHolder`），
+否则 403。实测重载后 3.1 秒重新成为房主。
+
 ### 每个人头上的数据卡
 
 视频下方原来常驻一条统计行（P2P 占比 / 观众 / 上下行 / 分片 / 同步 / 角色）。它对观众没有

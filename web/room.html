@@ -524,6 +524,10 @@
       // undid every transfer; identity now comes from the server, so this is just
       // a debounce against retrying on every poll.
       let leaderlessSince = 0;
+      // One immediate self-claim per page load. A reload (episode switch, refresh)
+      // gives us a new peerId while the room still records the old one, so without
+      // this the host spends ~18 s looking absent to everyone else.
+      let selfReclaimTried = false;
       let myPeerId = null;
       async function ensureHost(room) {
         // A vacant seat is filled in exactly two ways now:
@@ -544,21 +548,26 @@
         // The server decides *who* may take the seat back (viewerId), so this is
         // only a debounce, not a safety margin.
         const ownerReclaim = leaderless && Date.now() - leaderlessSince > 3_000;
-        // A fresh room belongs to whoever holds the token. A seat whose holder
-        // vanished is reclaimed by that same person after 15 s — and "same person"
-        // is decided by the server from the viewerId, because a host elected by a
-        // vote has no token at all.
+        // The seat may still be recorded against our *previous* peerId. Ask once,
+        // immediately: the server matches on viewerId, so the real host gets the
+        // seat back at once and everyone else is refused with a 403.
+        const seatHeldByOther = Boolean(room.hostPeerId) && room.hostPeerId !== myPeerId;
+        const immediateReclaim = seatHeldByOther && !selfReclaimTried;
+        if (!unassigned && !ownerReclaim && !immediateReclaim) return;
         if (unassigned && !token) return;
-        if (!unassigned && !ownerReclaim) return;
         const me = window.__screening;
         if (!me) return;
         myPeerId = me.stats().peerId;
+        // Consume the one-shot only now: an early call can reach this point before
+        // the player module has published `window.__screening`, and burning the
+        // flag there would skip the attempt entirely.
+        if (immediateReclaim) selfReclaimTried = true;
         claiming = true;
         try {
           const response = await fetch(`/api/rooms/${roomId}/host`, {
             method: "POST",
-            headers: { "content-type": "application/json", "x-room-token": token },
-            body: JSON.stringify({ peerId: myPeerId, selfPeerId: myPeerId, ownerToken: token }),
+            headers: { "content-type": "application/json", "x-room-token": token, "x-viewer-id": viewerId ?? "" },
+            body: JSON.stringify({ peerId: myPeerId, selfPeerId: myPeerId, ownerToken: token, viewerId }),
           });
           // Only a successful claim changes what the next poll would see, so only
           // that one is worth an immediate refresh.

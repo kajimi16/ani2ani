@@ -1432,9 +1432,15 @@ async function handle(req, res) {
       // token already proves the claim is legitimate, so a vacant seat is
       // grantable without presence; anything else still needs a live target.
       const ownerClaimingVacantSeat = seatIsVacant && isOwner(req, room, body);
+      // Holding the seat and asking for it under a new peerId is a refresh, not a
+      // takeover: the newcomer has not reported yet, so it is not in `live`.
+      const selfMoveByHolder = targetPeerId === body.selfPeerId && senderHoldsHostSeat(req, room, body);
+      const found = live.find((p) => p.peerId === targetPeerId);
       const target =
-        live.find((p) => p.peerId === targetPeerId) ??
-        (ownerClaimingVacantSeat ? { peerId: targetPeerId, name: null, videoTime: 0, playing: false } : null);
+        found ??
+        (ownerClaimingVacantSeat || selfMoveByHolder
+          ? { peerId: targetPeerId, name: null, videoTime: 0, playing: false }
+          : null);
       if (!target) {
         return json(res, 409, { ok: false, error: "that viewer is not in the room right now" });
       }
