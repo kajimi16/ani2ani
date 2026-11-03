@@ -1,7 +1,13 @@
 # 校内机器 → 边缘 VPS 的反向隧道（用户级）。
 # VPS 的 127.0.0.1:18080 → 本机 Caddy:8080；边缘 Caddy 再对外提供 TLS。
 #
-# 安装：cp deploy/systemd/user/*.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# 目标地址不入库：写在 ~/.config/ani2ani/tunnel.env（见 deploy/tunnel.env.example）
+#   EDGE_HOST=…
+#   EDGE_SSH_PORT=22
+#   EDGE_USER=root
+#
+# 安装：cp deploy/systemd/user/*.service ~/.config/systemd/user/
+#       systemctl --user daemon-reload && systemctl --user enable --now ani2ani-edge-tunnel
 [Unit]
 Description=ani2ani reverse tunnel to edge VPS
 After=network-online.target ani2ani-caddy.service
@@ -9,6 +15,10 @@ Wants=network-online.target ani2ani-caddy.service
 
 [Service]
 Type=simple
+EnvironmentFile=-%h/.config/ani2ani/tunnel.env
+Environment=EDGE_HOST=203.0.113.10
+Environment=EDGE_SSH_PORT=22
+Environment=EDGE_USER=root
 # 把 VPS 的 127.0.0.1:18080 转发到本机 Caddy:8080。
 # ExitOnForwardFailure 让转发失败时 ssh 直接退出，交给 systemd 重试。
 ExecStart=/usr/bin/autossh -M 0 -N -T \
@@ -17,7 +27,7 @@ ExecStart=/usr/bin/autossh -M 0 -N -T \
   -o UserKnownHostsFile=%h/.ssh/known_hosts \
   -i %h/.ssh/ani2ani_ed25519 \
   -R 127.0.0.1:18080:127.0.0.1:8080 \
-  -p 22 root@203.0.113.10
+  -p ${EDGE_SSH_PORT} ${EDGE_USER}@${EDGE_HOST}
 Environment=AUTOSSH_GATETIME=0
 Restart=always
 RestartSec=5
