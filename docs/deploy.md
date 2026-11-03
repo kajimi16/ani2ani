@@ -48,7 +48,7 @@ sudo ufw allow 3478/udp
 | `ROOM_MAX_UPLOAD_MB` | `8192` | 单集上限 |
 | `ROOM_MAX_COUNT` | `20` | 房间总数上限 |
 | `ROOM_CREATE_LIMIT` | `6` | 每 IP 每小时开房数 |
-| `ROOM_TRANSCODE_CONCURRENCY` | `2` | 并行转码数 |
+| `ROOM_TRANSCODE_CONCURRENCY` | `2` | 并行转码数；**2 vCPU 设 1**（x264 本来就用满全部核心） |
 | `ROOM_KEEP_SOURCE` | `0` | 保留源文件 |
 | `ROOM_HOST_TIMEOUT_S` | `30` | 房主超时 |
 | `ROOM_IDLE_HOURS` | `48` | 闲置房间保留 |
