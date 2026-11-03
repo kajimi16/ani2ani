@@ -27,7 +27,7 @@ const MAX_SIDEBAR_ROWS = 300;
  * @param {HTMLElement} options.playerContainer Plyr's container (fullscreen root)
  * @param {HTMLUListElement} options.sidebar list element outside the player
  */
-export function createDanmaku({ roomId, name, peerId, videoTime, playerContainer, sidebar }) {
+export function createDanmaku({ roomId, name, peerId, viewerId, videoTime, playerContainer, sidebar }) {
   if (!roomId || !playerContainer) return null;
 
   const layer = document.createElement("div");
@@ -125,6 +125,11 @@ export function createDanmaku({ roomId, name, peerId, videoTime, playerContainer
       if (sidebar) sidebar.scrollTop = sidebar.scrollHeight;
       return;
     }
+    // The room may forbid viewer danmaku; the server rejects the send and says so.
+    if (payload.type === "denied") {
+      document.dispatchEvent(new CustomEvent("danmaku-denied", { detail: { error: payload.error } }));
+      return;
+    }
     if (payload.type === "danmaku" && payload.item) {
       render(payload.item);
       appendSidebar(payload.item);
@@ -146,6 +151,9 @@ export function createDanmaku({ roomId, name, peerId, videoTime, playerContainer
     socket = new WebSocket(`${scheme}://${location.host}/ws/room/${roomId}`);
     socket.addEventListener("open", () => {
       connected = true;
+      // Identify before any danmaku: the server needs to know whether this
+      // connection belongs to the host, and peerId alone is forgeable.
+      if (viewerId) socket.send(JSON.stringify({ type: "hello", viewerId }));
       document.dispatchEvent(new CustomEvent("danmaku-status", { detail: { connected } }));
     });
     socket.addEventListener("message", onMessage);

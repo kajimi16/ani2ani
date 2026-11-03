@@ -1538,3 +1538,83 @@ html[data-theme="dark"] body.portal .p-theme .p-moon {
   0%, 46% { width: 0; }
   68%, 100% { width: 2em; }
 }
+
+/* --- 创建房间：观众权限 --- */
+
+.p-perm-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--p-line-strong);
+  background: transparent;
+  color: var(--p-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.18s;
+}
+
+.p-perm-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.p-perm-summary {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--p-muted);
+}
+
+.p-perm-caret {
+  color: var(--p-muted);
+  transition: transform 0.18s;
+}
+
+.p-perm-toggle.is-open .p-perm-caret {
+  transform: rotate(90deg);
+}
+
+.p-perm {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.p-perm[hidden] {
+  display: none;
+}
+
+.p-perm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--p-text-dim);
+}
+
+.p-perm-btn {
+  min-width: 58px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
+}
+
+.p-perm-btn.is-on {
+  background: rgba(46, 160, 67, 0.18);
+  border-color: rgba(46, 160, 67, 0.55);
+  color: #3fb950;
+}
+
+.p-perm-btn.is-off {
+  background: rgba(229, 83, 75, 0.18);
+  border-color: rgba(229, 83, 75, 0.55);
+  color: #e5534b;
+}

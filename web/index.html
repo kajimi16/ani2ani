@@ -121,6 +121,21 @@
           <span>房间密码</span>
           <input id="password" type="password" maxlength="32" placeholder="4–32 个字符" />
         </label>
+        <button class="p-perm-toggle" type="button" id="permToggle" aria-expanded="false">
+          <span>观众权限</span>
+          <span class="p-perm-summary" id="permSummary"></span>
+          <span class="p-perm-caret" aria-hidden="true">›</span>
+        </button>
+        <div class="p-perm" id="permPanel" hidden>
+          <div class="p-perm-row">
+            <span>允许观众发送弹幕</span>
+            <button class="p-perm-btn" type="button" data-perm="viewerDanmaku">允许</button>
+          </div>
+          <div class="p-perm-row">
+            <span>允许观众上传视频</span>
+            <button class="p-perm-btn" type="button" data-perm="viewerUpload">允许</button>
+          </div>
+        </div>
         <p class="p-hint" id="dialogHint" hidden></p>
         <div class="p-dialog-actions">
           <button class="p-quiet" type="button" data-close-dialog>取消</button>
@@ -206,6 +221,42 @@
       const titleInput = document.getElementById("title");
       const nameInput = document.getElementById("name");
       const createButton = document.getElementById("create");
+
+      /* ------------------------------------------------------------ 观众权限 */
+      const permToggle = document.getElementById("permToggle");
+      const permPanel = document.getElementById("permPanel");
+      const permSummary = document.getElementById("permSummary");
+      const permButtons = [...document.querySelectorAll("[data-perm]")];
+      // Matches the historical behaviour: anyone may send danmaku, only the
+      // host may upload.
+      const roomPerms = { viewerDanmaku: true, viewerUpload: false };
+
+      function renderPerms() {
+        for (const button of permButtons) {
+          const on = roomPerms[button.dataset.perm];
+          button.classList.toggle("is-on", on);
+          button.classList.toggle("is-off", !on);
+          button.textContent = on ? "允许" : "拒绝";
+          button.setAttribute("aria-pressed", String(on));
+        }
+        permSummary.textContent =
+          `弹幕${roomPerms.viewerDanmaku ? "允许" : "禁止"} · 上传${roomPerms.viewerUpload ? "允许" : "禁止"}`;
+      }
+
+      permToggle.addEventListener("click", () => {
+        const open = permPanel.hidden;
+        permPanel.hidden = !open;
+        permToggle.setAttribute("aria-expanded", String(open));
+        permToggle.classList.toggle("is-open", open);
+      });
+
+      for (const button of permButtons) {
+        button.addEventListener("click", () => {
+          roomPerms[button.dataset.perm] = !roomPerms[button.dataset.perm];
+          renderPerms();
+        });
+      }
+      renderPerms();
       const dialogHint = document.getElementById("dialogHint");
 
       const PAGE_SIZE = 12;
@@ -685,6 +736,7 @@
               title: titleInput.value,
               visibility: document.querySelector('input[name="visibility"]:checked')?.value ?? "public",
               password: passwordInput.value,
+              settings: { ...roomPerms },
             }),
           });
           if (!response.ok) {

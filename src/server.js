@@ -15,6 +15,7 @@ import Tracker from "bittorrent-tracker/server";
 import {
   canAccept,
   createRoom,
+  roomSettings,
   discardOutput,
   estimatedFootprint,
   diskInfo,
@@ -226,9 +227,24 @@ danmakuWss.on("connection", (socket, req, roomId) => {
     } catch {
       return;
     }
+    // Identity for the host check. peerId travels in the danmaku frame itself
+    // and anyone can copy it, so it cannot decide permissions.
+    if (body?.type === "hello") {
+      if (typeof body.viewerId === "string") socket.viewerId = body.viewerId.slice(0, 64);
+      return;
+    }
     if (body?.type !== "danmaku") return;
     const text = String(body.text ?? "").replace(/\s+/g, " ").trim().slice(0, DANMAKU_MAX_LEN);
     if (!text) return;
+
+    const live = getRoom(roomId);
+    if (!live) return;
+    const isHost = Boolean(socket.viewerId) && socket.viewerId === live.hostViewerId;
+    const allowed = roomSettings(live).viewerDanmaku || isHost;
+    if (!allowed) {
+      socket.send(JSON.stringify({ type: "denied", error: "房主已关闭观众弹幕" }));
+      return;
+    }
 
     broadcastDanmaku(roomId, {
       id: crypto.randomUUID(),
@@ -698,6 +714,7 @@ function roomView(room) {
   const hostPresent = people.some((p) => p.isHost);
   return {
     ...rest,
+    settings: roomSettings(room),
     // viewerId is a capability: the sitting host proves who it is with it when
     // handing the seat over, and a voted-in host has no ownerToken at all. Never
     // publish it.
@@ -1299,7 +1316,15 @@ async function handle(req, res) {
       return json(res, 400, { ok: false, error: "私密房间密码需 4–32 个字符" });
     }
 
-    const room = createRoom({ title: body.title, visibility, password });
+    const room = createRoom({
+      title: body.title,
+      visibility,
+      password,
+      settings: {
+        viewerDanmaku: body.settings?.viewerDanmaku !== false,
+        viewerUpload: body.settings?.viewerUpload === true,
+      },
+    });
     // The creator is the first viewer, and HLS requests cannot carry the owner
     // token — so a private room issues its access cookie right here. Without
     // this the host can open the page but every segment is refused.
@@ -1471,7 +1496,12 @@ async function handle(req, res) {
     // Lets a reloaded page pick up an interrupted upload instead of starting
     // the whole file again.
     if (rest === "/source/status" && req.method === "GET") {
-      if (!isOwner(req, room) && !senderHoldsHostSeat(req, room, null)) {
+      // Either the owner/host, or a room that explicitly lets viewers upload.
+      if (
+        !isOwner(req, room) &&
+        !senderHoldsHostSeat(req, room, null) &&
+        !roomSettings(room).viewerUpload
+      ) {
         return json(res, 403, { ok: false, error: "需要建房时的令牌，或先成为房主" });
       }
       const session = uploadSessions.get(room.id);
@@ -1489,7 +1519,12 @@ async function handle(req, res) {
       // Uploading an episode is running the screening, not owning the room: the
       // sitting host must be able to do it even when their browser has no token
       // (a host elected by vote, or a browser that never created the room).
-      if (!isOwner(req, room) && !senderHoldsHostSeat(req, room, null)) {
+      // Either the owner/host, or a room that explicitly lets viewers upload.
+      if (
+        !isOwner(req, room) &&
+        !senderHoldsHostSeat(req, room, null) &&
+        !roomSettings(room).viewerUpload
+      ) {
         return json(res, 403, { ok: false, error: "需要建房时的令牌，或先成为房主" });
       }
       // A chunked upload holds busyRooms for its whole run; only a *different*
@@ -1656,12 +1691,18 @@ async function handle(req, res) {
 
     const episodeMatch = rest.match(/^\/episodes\/([A-Za-z0-9-]{4,40})$/);
     if (episodeMatch && req.method === "DELETE") {
-      if (!isOwner(req, room) && !senderHoldsHostSeat(req, room, null)) {
-        return json(res, 403, { ok: false, error: "需要建房时的令牌，或先成为房主" });
-      }
       const episodeId = episodeMatch[1];
       const episode = room.episodes?.find((entry) => entry.id === episodeId);
       if (!episode) return json(res, 404, { ok: false, error: "episode not found" });
+      // Viewers who may upload can clean up their own failed attempt, but only
+      // the owner/host may remove anything that is playable.
+      const canManage = isOwner(req, room) || senderHoldsHostSeat(req, room, null);
+      if (!canManage) {
+        const cleanupAllowed = roomSettings(room).viewerUpload && episode.status === "failed";
+        if (!cleanupAllowed) {
+          return json(res, 403, { ok: false, error: "只有房主能删除可播放的剧集" });
+        }
+      }
       if (room.currentEpisodeId === episodeId) {
         return json(res, 409, { ok: false, error: "这一集正在使用，先切到别的集再删" });
       }

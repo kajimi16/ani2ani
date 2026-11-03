@@ -236,7 +236,18 @@ export function hasAccessToken(room, token) {
   });
 }
 
-export function createRoom({ title, ownerToken, visibility, password }) {
+/**
+ * What viewers who are not the host may do. Unknown/legacy rooms fall back to
+ * the historical behaviour: anyone may send danmaku, only the host may upload.
+ */
+export function roomSettings(room) {
+  return {
+    viewerDanmaku: room?.settings?.viewerDanmaku !== false,
+    viewerUpload: room?.settings?.viewerUpload === true,
+  };
+}
+
+export function createRoom({ title, ownerToken, visibility, password, settings }) {
   ensureDirs();
   let id = randomId();
   while (rooms.has(id)) id = randomId();
@@ -251,6 +262,10 @@ export function createRoom({ title, ownerToken, visibility, password }) {
     ownerToken: ownerToken ?? crypto.randomBytes(16).toString("hex"),
     createdAt: Date.now(),
     status: "created",
+    settings: {
+      viewerDanmaku: settings?.viewerDanmaku !== false,
+      viewerUpload: settings?.viewerUpload === true,
+    },
     // One room can hold a few videos; the host picks which one is screening.
     episodes: [],
     currentEpisodeId: null,

@@ -124,13 +124,6 @@
 
           <div class="eps" id="episodeList"></div>
 
-          <div class="row" id="uploadRow">
-            <input type="file" id="file" accept="video/*,.mkv,.mp4,.webm,.mov,.avi,.ts,.m4v" />
-            <button id="upload" type="button">上传并处理</button>
-          </div>
-          <div class="progress"><i id="uploadBar"></i></div>
-          <p class="hint" id="uploadHint"></p>
-
           <div class="row">
             <button id="start" type="button" disabled>开始放映</button>
             <button id="startDelay" type="button" disabled>10 秒后开始</button>
@@ -141,11 +134,13 @@
           <p class="hint" id="ownerHint"></p>
           <p class="error" id="ownerError"></p>
         </owner-panel>
+
       </main>
 
       <aside class="d-chat" aria-label="弹幕">
         <div class="d-chat-head">
           <button class="d-tab is-active" type="button" data-tab="danmaku">弹幕</button>
+          <button class="d-tab" type="button" data-tab="episodes">剧集</button>
           <button class="d-tab" type="button" data-tab="people">在线</button>
         </div>
         <p class="d-notice">文明观影，请勿剧透</p>
@@ -156,6 +151,10 @@
           </section>
         </div>
 
+        <div class="d-pane" data-pane="episodes" hidden>
+          <ul class="ep-cards" id="epCards"></ul>
+        </div>
+
         <div class="d-pane" data-pane="people" hidden>
           <section class="people" id="people" hidden>
             <ul id="peopleList"></ul>
@@ -163,9 +162,19 @@
           <p class="d-empty" id="peopleEmpty" hidden>还没有人进来。</p>
         </div>
 
-        <div class="d-chat-input">
+        <div class="d-chat-input" id="danmakuComposer">
           <input id="danmakuInput" type="text" maxlength="120" placeholder="发一条弹幕" aria-label="弹幕内容" />
           <button id="danmakuSend" type="button">发送</button>
+        </div>
+
+        <div class="d-chat-input d-upload-bar" id="uploadRow" hidden>
+          <input type="file" id="file" accept="video/*,.mkv,.mp4,.webm,.mov,.avi,.ts,.m4v" aria-label="选择片源" />
+          <button id="upload" type="button">上传并处理</button>
+        </div>
+        <div class="d-upload-meta" id="uploadMeta" hidden>
+          <div class="progress"><i id="uploadBar"></i></div>
+          <p class="hint" id="uploadHint"></p>
+          <p class="error" id="uploadError"></p>
         </div>
         <p class="d-chat-status" id="danmakuStatus">连接中…</p>
       </aside>
@@ -232,6 +241,10 @@
       const episodeList = document.getElementById("episodeList");
       const ownerHint = document.getElementById("ownerHint");
       const ownerError = document.getElementById("ownerError");
+      const uploadError = document.getElementById("uploadError");
+      const epCards = document.getElementById("epCards");
+      const danmakuComposer = document.getElementById("danmakuComposer");
+      const uploadMeta = document.getElementById("uploadMeta");
 
       const STATUS_TEXT = {
         created: "等待上传",
@@ -282,18 +295,25 @@
         }
 
         const iAmHostNow = window.__screening?.isHost?.() ?? false;
-        if (!token && !iAmHostNow) {
+        const canManage = Boolean(token) || iAmHostNow;
+        const episodes = room.episodes ?? [];
+        const processing = episodes.some((episode) => episode.status === "transcoding");
+
+        // Everything below runs before the owner-only block returns early: a
+        // viewer who is allowed to upload needs the button re-enabled too.
+        renderEpisodeCards(room);
+        applyViewerPermissions(room, canManage);
+        mayUpload = (canManage || room.settings?.viewerUpload) && episodes.length < 3;
+        const busy = ["uploading", "transcoding", "queued"].includes(room.status) || processing;
+        uploadButton.disabled = busy && !resumableUpload;
+        syncComposer();
+
+        if (!canManage) {
           ownerPanel.hidden = true;
           return;
         }
         ownerPanel.hidden = false;
-        // Upload and delete stay owner-only: a host who arrived by vote runs the
-        // screening, but does not own the room's files.
-        uploadRow.hidden = !token;
         removeButton.hidden = !token;
-
-        const episodes = room.episodes ?? [];
-        const processing = episodes.some((episode) => episode.status === "transcoding");
         episodeList.innerHTML =
           episodes.length === 0
             ? '<p class="hint">还没有片源，先上传一个。</p>'
@@ -321,11 +341,7 @@
                   </div>`;
                 })
                 .join("");
-        // 上传跟着「谁是房主」走，而不是跟着令牌走：投票选出来的房主没有令牌。
-        uploadRow.hidden = !(token || iAmHostNow) || episodes.length >= 3;
 
-        const busy = ["uploading", "transcoding", "queued"].includes(room.status) || processing;
-        uploadButton.disabled = busy && !resumableUpload;
         // Ready to begin, already running (restart), or finished (replay): all
         // three can start a screening; the button just says which it is.
         const canStart = ["ready", "live", "ended"].includes(room.status);
@@ -672,6 +688,65 @@
         refreshRoom();
       });
 
+      let mayUpload = false;
+      let currentPane = "danmaku";
+
+      // 侧栏底部按栏目换内容：剧集页给能上传的人显示上传控件，其余显示弹幕输入。
+      function syncComposer() {
+        const showUpload = mayUpload && currentPane === "episodes";
+        danmakuComposer.hidden = showUpload;
+        uploadRow.hidden = !showUpload;
+        uploadMeta.hidden = !showUpload;
+      }
+
+      // 剧集对所有观众可见：谁在播、哪集处理到多少。
+      function renderEpisodeCards(room) {
+        const episodes = room.episodes ?? [];
+        if (episodes.length === 0) {
+          epCards.innerHTML = '<li class="ep-card is-empty">还没有片源</li>';
+          return;
+        }
+        const progress = room.progress;
+        epCards.innerHTML = episodes
+          .map((episode, index) => {
+            const percent =
+              episode.status === "transcoding" && progress?.percent
+                ? Math.round(progress.percent * 100)
+                : 0;
+            const state =
+              episode.status === "ready"
+                ? episode.current
+                  ? "放映中"
+                  : "已就绪"
+                : episode.status === "failed"
+                  ? "处理失败"
+                  : `处理中 ${percent}%`;
+            const bar =
+              episode.status === "transcoding"
+                ? `<span class="ep-card-bar"><i style="width:${percent}%"></i></span>`
+                : "";
+            const classes =
+              "ep-card" +
+              (episode.current ? " is-current" : "") +
+              (episode.status === "failed" ? " is-failed" : "");
+            return `<li class="${classes}">
+              <span class="ep-card-index">EP${index + 1}</span>
+              <span class="ep-card-name" title="${escapeHtml(episode.name)}">${escapeHtml(episode.name)}</span>
+              <span class="ep-card-state">${state}</span>
+              ${bar}
+            </li>`;
+          })
+          .join("");
+      }
+
+      // 房主可以关掉观众弹幕；房主自己不受限制。
+      function applyViewerPermissions(room, canManage) {
+        const allowed = canManage || room.settings?.viewerDanmaku !== false;
+        danmakuInput.disabled = !allowed;
+        danmakuSend.disabled = !allowed;
+        danmakuInput.placeholder = allowed ? "发一条弹幕" : "房主已关闭观众弹幕";
+      }
+
       function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, (c) =>
           ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
@@ -764,6 +839,10 @@
       const danmakuInput = document.getElementById("danmakuInput");
       const danmakuSend = document.getElementById("danmakuSend");
       const danmakuStatus = document.getElementById("danmakuStatus");
+
+      document.addEventListener("danmaku-denied", (event) => {
+        danmakuStatus.textContent = event.detail?.error ?? "房主已关闭观众弹幕";
+      });
 
       document.addEventListener("danmaku-status", (event) => {
         const connected = event.detail?.connected;
@@ -872,10 +951,10 @@
       uploadButton.addEventListener("click", async () => {
         const file = fileInput.files?.[0];
         if (!file) {
-          ownerError.textContent = "先选一个视频文件。";
+          uploadError.textContent = "先选一个视频文件。";
           return;
         }
-        ownerError.textContent = "";
+        uploadError.textContent = "";
         uploadButton.disabled = true;
         uploadHint.textContent = "上传中 0%";
         resumableUpload = null;
@@ -990,7 +1069,7 @@
           refreshRoom();
         } catch (error) {
           uploadButton.disabled = false;
-          ownerError.textContent = `上传失败：${error.message}`;
+          uploadError.textContent = `上传失败：${error.message}`;
         }
       });
 
@@ -1393,6 +1472,8 @@
         if (name === "people") {
           peopleEmpty.hidden = document.getElementById("peopleList").children.length > 0;
         }
+        currentPane = name;
+        syncComposer();
       }
 
       tabs.forEach((tab) => tab.addEventListener("click", () => showPane(tab.dataset.tab)));

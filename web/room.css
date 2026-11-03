@@ -1792,3 +1792,132 @@ html[data-theme="dark"] body.studio .ep button {
 .ep-del:hover:not(:disabled) {
   border-color: var(--danger);
 }
+
+/* --- 剧集栏：所有人都能看到房里有哪些片源 --- */
+
+.ep-cards {
+  list-style: none;
+  margin: 0;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+  align-content: start;
+}
+
+.ep-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "index name state"
+    "bar bar bar";
+  gap: 2px 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(8px);
+}
+
+.ep-card.is-current {
+  border-color: var(--accent, #00aeec);
+  background: rgba(0, 174, 236, 0.1);
+}
+
+.ep-card.is-failed {
+  border-color: rgba(255, 92, 92, 0.5);
+}
+
+.ep-card.is-empty {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.ep-card-index {
+  grid-area: index;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.ep-card-name {
+  grid-area: name;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ep-card-state {
+  grid-area: state;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ep-card.is-current .ep-card-state {
+  color: var(--accent, #00aeec);
+}
+
+.ep-card.is-failed .ep-card-state {
+  color: #ff5c5c;
+}
+
+.ep-card-bar {
+  grid-area: bar;
+  display: block;
+  height: 3px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.ep-card-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent, #00aeec);
+  transition: width 0.3s ease;
+}
+
+/* 上传控件占用侧栏底部原弹幕输入的位置，只在「剧集」栏露出 */
+.d-upload-bar input[type="file"] {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.d-upload-meta {
+  padding: 0 14px 12px;
+}
+
+.d-upload-meta[hidden] {
+  display: none;
+}
+
+.d-upload-meta .progress {
+  height: 3px;
+  margin-bottom: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.d-upload-meta .progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent, #00aeec);
+  transition: width 0.3s ease;
+}
+
+.d-upload-meta .hint,
+.d-upload-meta .error {
+  margin: 0;
+  font-size: 11px;
+}
