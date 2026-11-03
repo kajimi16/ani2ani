@@ -722,6 +722,11 @@ function roomView(room) {
     episodes: (room.episodes ?? []).map((episode) => ({
       id: episode.id,
       name: episode.name,
+      // 显示名：房主设置的别名优先，否则用文件名。
+      alias: episode.alias ?? null,
+      poster: fs.existsSync(posterPath(room.id, episode.id))
+        ? `${episodeMediaBase(room.id, episode)}poster.jpg`
+        : null,
       durationSec: episode.durationSec ?? 0,
       segments: episode.segments ?? 0,
       status: episode.status ?? "ready",
@@ -1727,6 +1732,25 @@ async function handle(req, res) {
         saveRooms();
       }
       log(`room ${room.id}: removed episode ${episodeId}`);
+      return json(res, 200, { ok: true, room: roomView(getRoom(room.id)) });
+    }
+
+    if (episodeMatch && req.method === "PATCH") {
+      const episodeId = episodeMatch[1];
+      const episode = room.episodes?.find((entry) => entry.id === episodeId);
+      if (!episode) return json(res, 404, { ok: false, error: "episode not found" });
+      if (!isOwner(req, room) && !senderHoldsHostSeat(req, room, null)) {
+        return json(res, 403, { ok: false, error: "只有房主可以改剧集名字" });
+      }
+      const body = await readJson(req).catch(() => ({}));
+      const alias = String(body.alias ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 80);
+      // 清空即回到文件名。
+      episode.alias = alias || null;
+      saveRooms();
+      log(`room ${room.id}: episode ${episodeId} alias -> ${episode.alias ?? "(cleared)"}`);
       return json(res, 200, { ok: true, room: roomView(getRoom(room.id)) });
     }
 

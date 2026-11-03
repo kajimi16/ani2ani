@@ -168,7 +168,10 @@
         </div>
 
         <div class="d-chat-input d-upload-bar" id="uploadRow" hidden>
-          <input type="file" id="file" accept="video/*,.mkv,.mp4,.webm,.mov,.avi,.ts,.m4v" aria-label="选择片源" />
+          <label class="d-upload-pick" for="file">
+            <span id="fileLabel">选择文件</span>
+          </label>
+          <input type="file" id="file" accept="video/*,.mkv,.mp4,.webm,.mov,.avi,.ts,.m4v" aria-label="选择片源" hidden />
           <button id="upload" type="button">上传并处理</button>
         </div>
         <div class="d-upload-meta" id="uploadMeta" hidden>
@@ -242,6 +245,7 @@
       const ownerHint = document.getElementById("ownerHint");
       const ownerError = document.getElementById("ownerError");
       const uploadError = document.getElementById("uploadError");
+      const fileLabel = document.getElementById("fileLabel");
       const epCards = document.getElementById("epCards");
       const danmakuComposer = document.getElementById("danmakuComposer");
       const uploadMeta = document.getElementById("uploadMeta");
@@ -301,6 +305,7 @@
 
         // Everything below runs before the owner-only block returns early: a
         // viewer who is allowed to upload needs the button re-enabled too.
+        mayEditAlias = canManage;
         renderEpisodeCards(room);
         applyViewerPermissions(room, canManage);
         mayUpload = (canManage || room.settings?.viewerUpload) && episodes.length < 3;
@@ -689,6 +694,7 @@
       });
 
       let mayUpload = false;
+      let mayEditAlias = false;
       let currentPane = "danmaku";
 
       // 侧栏底部按栏目换内容：剧集页给能上传的人显示上传控件，其余显示弹幕输入。
@@ -700,7 +706,11 @@
       }
 
       // 剧集对所有观众可见：谁在播、哪集处理到多少。
+      // 正在改名时不要被 3 秒轮询覆盖掉输入框。
+      let editingEpisodeId = null;
+
       function renderEpisodeCards(room) {
+        if (editingEpisodeId) return;
         const episodes = room.episodes ?? [];
         if (episodes.length === 0) {
           epCards.innerHTML = '<li class="ep-card is-empty">还没有片源</li>';
@@ -729,15 +739,91 @@
               "ep-card" +
               (episode.current ? " is-current" : "") +
               (episode.status === "failed" ? " is-failed" : "");
+            const display = episode.alias || episode.name;
+            const thumb = episode.poster
+              ? `<img class="ep-card-thumb" src="${escapeHtml(episode.poster)}" alt="" loading="lazy" />`
+              : '<span class="ep-card-thumb is-blank" aria-hidden="true"></span>';
+            const editable = mayEditAlias ? ' data-editable="1"' : "";
+            const title = episode.alias
+              ? `${escapeHtml(episode.alias)}（原文件名：${escapeHtml(episode.name)}）`
+              : escapeHtml(episode.name);
             return `<li class="${classes}">
-              <span class="ep-card-index">EP${index + 1}</span>
-              <span class="ep-card-name" title="${escapeHtml(episode.name)}">${escapeHtml(episode.name)}</span>
-              <span class="ep-card-state">${state}</span>
-              ${bar}
+              ${thumb}
+              <div class="ep-card-body">
+                <div class="ep-card-line">
+                  <span class="ep-card-index">EP${index + 1}</span>
+                  <span class="ep-card-name"${editable} data-episode="${escapeHtml(episode.id)}"
+                        data-alias="${escapeHtml(episode.alias ?? "")}"
+                        data-name="${escapeHtml(episode.name)}" title="${title}">${escapeHtml(display)}</span>
+                  <span class="ep-card-state">${state}</span>
+                </div>
+                ${bar}
+              </div>
             </li>`;
           })
           .join("");
       }
+
+      // 选完文件后按钮上显示文件名，和「上传并处理」同一行同一高度。
+      fileInput.addEventListener("change", () => {
+        const picked = fileInput.files?.[0]?.name;
+        fileLabel.textContent = picked || "选择文件";
+        fileLabel.title = picked || "";
+      });
+
+      // 点名字改名：回车保存，Esc 取消，失焦保存。留空回到文件名。
+      function startEpisodeRename(nameEl) {
+        const episodeId = nameEl.dataset.episode;
+        const input = document.createElement("input");
+        input.className = "ep-card-input";
+        input.value = nameEl.dataset.alias || "";
+        input.placeholder = nameEl.dataset.name || "别名";
+        input.maxLength = 80;
+        editingEpisodeId = episodeId;
+        nameEl.replaceWith(input);
+        input.focus();
+        input.select();
+
+        let settled = false;
+        const finish = async (save) => {
+          if (settled) return;
+          settled = true;
+          editingEpisodeId = null;
+          if (save) {
+            try {
+              const response = await fetch(`/api/rooms/${roomId}/episodes/${episodeId}`, {
+                method: "PATCH",
+                headers: {
+                  "content-type": "application/json",
+                  "x-room-token": token ?? "",
+                  "x-viewer-id": viewerId ?? "",
+                },
+                body: JSON.stringify({ alias: input.value.trim() }),
+              });
+              if (!response.ok) throw new Error("rename failed");
+            } catch {
+              uploadError.textContent = "改名失败，稍后再试。";
+            }
+          }
+          refreshRoom();
+        };
+
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            finish(true);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            finish(false);
+          }
+        });
+        input.addEventListener("blur", () => finish(true));
+      }
+
+      epCards.addEventListener("click", (event) => {
+        const nameEl = event.target.closest(".ep-card-name[data-editable]");
+        if (nameEl) startEpisodeRename(nameEl);
+      });
 
       // 房主可以关掉观众弹幕；房主自己不受限制。
       function applyViewerPermissions(room, canManage) {
