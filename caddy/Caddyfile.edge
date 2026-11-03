@@ -1,0 +1,46 @@
+# 边缘节点（VPS）配置：只做 TLS 与转发，应用本体在校内机器上。
+#
+#   外部用户 → ani2-ext.kajimi.cc:443 → 这里 → 127.0.0.1:18080（SSH 反向隧道）
+#            → 校内 Caddy:8080 → Node:8001
+#
+# 隧道由校内机器用 autossh -R 建立，见 deploy/systemd/ani2ani-tunnel.service。
+# 媒体不在这台机器上落盘：8 Mbps 是瓶颈，拷一份不会更快，只会多一处同步延迟。
+
+{
+	admin off
+	persist_config off
+	email {$ACME_EMAIL:admin@example.com}
+}
+
+{$EDGE_SITE:ani2-ext.kajimi.cc} {
+	encode zstd gzip
+
+	log {
+		output file ./logs/edge.log {
+			roll_size 256MiB
+			roll_keep 2
+		}
+		format json
+		level INFO
+	}
+
+	# 隧道没连上时给出可读的 502，而不是空白页
+	handle_errors {
+		respond "{err.status_code} {err.status_text}" {err.status_code}
+	}
+
+	reverse_proxy 127.0.0.1:18080 {
+		# 客户端看到的是 VPS，真实来源要带进隧道，校内 Caddy 才认得出
+		header_up X-Forwarded-For {http.request.remote.host}
+		header_up X-Real-IP {http.request.remote.host}
+
+		# WebSocket（tracker / 弹幕）与上传都要放开
+		transport http {
+			read_buffer 16KB
+		}
+	}
+
+	request_body {
+		max_size 8192MB
+	}
+}

@@ -1,0 +1,18 @@
+# 边缘节点：只跑 Caddy（TLS + 转发到隧道），不跑 Node。
+[Unit]
+Description=ani2ani edge (Caddy, TLS for ani2-ext)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/ani2ani
+EnvironmentFile=-/srv/ani2ani/.env
+ExecStart=/usr/bin/caddy run --config caddy/Caddyfile.edge --adapter caddyfile
+Restart=always
+RestartSec=3
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
