@@ -1259,7 +1259,12 @@ async function handle(req, res) {
     }
 
     if (rest === "/source" && req.method === "PUT") {
-      if (!isOwner(req, room)) return json(res, 403, { ok: false, error: "owner token required" });
+      // Uploading an episode is running the screening, not owning the room: the
+      // sitting host must be able to do it even when their browser has no token
+      // (a host elected by vote, or a browser that never created the room).
+      if (!isOwner(req, room) && !senderHoldsHostSeat(req, room, null)) {
+        return json(res, 403, { ok: false, error: "需要建房时的令牌，或先成为房主" });
+      }
       if (busyRooms.has(room.id)) {
         return json(res, 409, {
           ok: false,
@@ -1339,7 +1344,9 @@ async function handle(req, res) {
 
     const episodeMatch = rest.match(/^\/episodes\/([A-Za-z0-9-]{4,40})$/);
     if (episodeMatch && req.method === "DELETE") {
-      if (!isOwner(req, room)) return json(res, 403, { ok: false, error: "owner token required" });
+      if (!isOwner(req, room) && !senderHoldsHostSeat(req, room, null)) {
+        return json(res, 403, { ok: false, error: "需要建房时的令牌，或先成为房主" });
+      }
       const episodeId = episodeMatch[1];
       const episode = room.episodes?.find((entry) => entry.id === episodeId);
       if (!episode) return json(res, 404, { ok: false, error: "episode not found" });
@@ -1463,7 +1470,13 @@ async function handle(req, res) {
     }
 
     if (rest === "" && req.method === "DELETE") {
-      if (!isOwner(req, room)) return json(res, 403, { ok: false, error: "owner token required" });
+      // Deleting the room destroys the files, so it stays with whoever created it.
+      if (!isOwner(req, room)) {
+        return json(res, 403, {
+          ok: false,
+          error: "只有建房那个浏览器能删除房间（令牌只存在那台设备上）",
+        });
+      }
       transcodeJobs.get(room.id)?.kill();
       transcodeJobs.delete(room.id);
       removeRoom(room.id);

@@ -310,7 +310,7 @@
                     : episode.status === "ready"
                       ? `<button type="button" data-episode="${escapeHtml(episode.id)}">播放这一集</button>`
                       : "";
-                  const canDelete = Boolean(token) && !episode.current && episode.status !== "transcoding";
+                  const canDelete = (Boolean(token) || iAmHostNow) && !episode.current && episode.status !== "transcoding";
                   const remove = canDelete
                     ? `<button type="button" class="ep-del" data-delete-episode="${escapeHtml(episode.id)}" title="删除这一集">删</button>`
                     : "";
@@ -321,7 +321,8 @@
                   </div>`;
                 })
                 .join("");
-        uploadRow.hidden = !token || episodes.length >= 3;
+        // 上传跟着「谁是房主」走，而不是跟着令牌走：投票选出来的房主没有令牌。
+        uploadRow.hidden = !(token || iAmHostNow) || episodes.length >= 3;
 
         const busy = ["uploading", "transcoding", "queued"].includes(room.status) || processing;
         uploadButton.disabled = busy;
@@ -837,7 +838,9 @@
         // multi-minute transfer, and fetch still cannot report it.
         const request = new XMLHttpRequest();
         request.open("PUT", `/api/rooms/${roomId}/source`);
-        request.setRequestHeader("x-room-token", token);
+        request.setRequestHeader("x-room-token", token ?? "");
+        // 无令牌的房主靠这个自证；缺了它 /source 会 403
+        request.setRequestHeader("x-viewer-id", viewerId ?? "");
         request.setRequestHeader("x-filename", encodeURIComponent(file.name));
         request.setRequestHeader("content-type", "application/octet-stream");
 
