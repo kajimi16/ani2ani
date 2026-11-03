@@ -136,6 +136,36 @@ ssh root@203.0.113.10 'journalctl -u ani2ani-edge-caddy -n 30 --no-pager'
 
 VPS 的 `/srv/ani2ani/.env` 只需 `EDGE_SITE` 与 `ACME_EMAIL`，证书由 Caddy 自动申请续期。
 
+校外观众的 STUN 也在这台机器上（页面用 `stun:<当前域名>:3478`，无需改代码）：
+
+```bash
+apt-get install -y coturn
+cat > /etc/turnserver.conf <<EOF
+listening-port=3478
+fingerprint
+no-auth
+no-tls
+no-dtls
+no-cli
+# 关键：只应答 STUN。no-auth 下任何人都能申请 TURN Allocation，
+# 这台机器出向只有 ~7 Mbps，不能当公开中继。
+stun-only
+realm=ani2ani
+EOF
+echo "TURNSERVER_ENABLED=1" >> /etc/default/coturn
+systemctl enable --now coturn
+```
+
+**安全组必须放行入站 UDP 3478**，否则只能退回公共 STUN。
+
+验证只做 STUN：Binding 回 `0x0101`，Allocate 必须无响应（`stun-only`）。
+`no-udp-relay` 和 `no-tcp-relay` 不能同时写，coturn 会拒绝启动。
+
+```bash
+# 校外机器执行，期望 0x0101
+python3 -c "import socket,struct,os;s=socket.socket(2,2);s.settimeout(5);s.sendto(struct.pack('!HHI',1,0,0x2112A442)+os.urandom(12),('ani2-ext.kajimi.cc',3478));print('0x%04x'%struct.unpack('!H',s.recvfrom(1024)[0][:2])[0])"
+```
+
 ### 开机自启
 
 ```bash
