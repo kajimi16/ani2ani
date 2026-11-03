@@ -90,6 +90,26 @@ journalctl --user -u ani2ani-node -f      # node 日志（systemd 接管后不�
 tail -f logs/access.log                   # Caddy 访问日志
 ```
 
+### 部署窗口
+
+```bash
+date '+%H:%M'
+```
+
+```bash
+# 最近 2 分钟有没有人真的在拉分片（含私密房）。
+# 不要用 /api/rooms —— 它过滤私密房；也不要看 status === "live"，
+# 那个状态在放映结束后不会自动清掉。
+tail -300 logs/access.log | python3 -c "
+import sys, json, time
+now = time.time()
+print(sum(1 for l in sys.stdin
+          if (lambda d: now - d.get('ts', 0) < 120 and '/media/' in str(d.get('request', {}).get('uri', '')))(json.loads(l))))"
+```
+
+输出 0 才动生产。00:00–18:00 期间改完即部署，不需要额外确认；
+18:00–24:00 或有流量时先问一声。
+
 ### 升级
 
 ```bash
