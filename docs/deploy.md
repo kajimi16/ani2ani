@@ -108,6 +108,34 @@ bash scripts/build-player.sh
 systemctl --user restart ani2ani-node ani2ani-caddy
 ```
 
+### 边缘节点（校外入口）
+
+```bash
+# 与校内同步代码（不含 .git / data / node_modules）
+rsync -az --delete --exclude '{.git,data*,node_modules,run*,logs*,certs,hls}' \
+  ./ root@203.0.113.10:/srv/ani2ani/
+```
+
+```bash
+# VPS 一次
+scp deploy/systemd/ani2ani-edge-caddy.service root@203.0.113.10:/etc/systemd/system/
+ssh root@203.0.113.10 'systemctl daemon-reload && systemctl enable --now ani2ani-edge-caddy'
+```
+
+```bash
+# 校内：建立反向隧道（VPS:18080 → 本机:8080）
+systemctl --user enable --now ani2ani-edge-tunnel
+systemctl --user status ani2ani-edge-tunnel
+```
+
+```bash
+curl -sI https://ani2-ext.kajimi.cc/
+curl -s https://ani2-ext.kajimi.cc/api/rooms
+ssh root@203.0.113.10 'journalctl -u ani2ani-edge-caddy -n 30 --no-pager'
+```
+
+VPS 的 `/srv/ani2ani/.env` 只需 `EDGE_SITE` 与 `ACME_EMAIL`，证书由 Caddy 自动申请续期。
+
 ### 开机自启
 
 ```bash
