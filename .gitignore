@@ -4,6 +4,12 @@
 # reads it can drive that room. Media under it is large and reconstructable.
 data/
 
+# Dev stack (scripts/start-dev.sh): separate ports and its own room tree, so a
+# live screening is never touched by local experiments.
+data-dev/
+run-dev/
+logs-dev/
+
 # Pid files and the throwaway browser profiles from scripts/local-viewers.sh
 # (782 MB of Chromium user data).
 run/
@@ -21,9 +27,13 @@ rounds/
 
 # Dependencies and build artefacts
 node_modules/
+node_modules
 web/player.js.map
 
 # Local environment overrides (keys, base URLs)
 .env
 .env.*
 certs/
+# scripts/dev-worktree.sh symlinks these into the worktree; a bare name is
+# needed because the trailing-slash patterns above only match real directories.
+certs

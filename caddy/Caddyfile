@@ -15,9 +15,9 @@
 # Screening origin. Port 8080 only — no privileged ports, no TLS cert work.
 # Every media response is logged as JSON with bytes_written, which is the
 # independent measurement used to trust or reject the in-browser P2P numbers.
-:8080 {
+:{$PORT:8080} {
 	log {
-		output file ./logs/access.log {
+		output file {$LOG_DIR:./logs}/access.log {
 			roll_size 512MiB
 			roll_keep 3
 		}
@@ -27,16 +27,16 @@
 
 	# Signaling (WebTorrent tracker WebSocket) and control API.
 	handle /tracker* {
-		reverse_proxy 127.0.0.1:8001
+		reverse_proxy 127.0.0.1:{$API_PORT:8001}
 	}
 
 	handle /api/* {
-		reverse_proxy 127.0.0.1:8001
+		reverse_proxy 127.0.0.1:{$API_PORT:8001}
 	}
 
 	# Danmaku channel: one WebSocket per viewer, scoped to a room.
 	handle /ws/* {
-		reverse_proxy 127.0.0.1:8001
+		reverse_proxy 127.0.0.1:{$API_PORT:8001}
 	}
 
 	# Per-room media. Each room owns its HLS tree under data/rooms/<id>/hls, so a
@@ -47,7 +47,7 @@
 		# password, so this costs one loopback request per segment and changes
 		# nothing about what a public room serves. The whole /media tree is
 		# matched; the endpoint decides per room id.
-		forward_auth 127.0.0.1:8001 {
+		forward_auth 127.0.0.1:{$API_PORT:8001} {
 			uri /api/media-auth
 		}
 
@@ -118,7 +118,7 @@
 
 # 校内媒体镜像。只做同一件事：把 /media 用 HTTPS 发出去，让校内观众绕开 VPS 的
 # 带宽。没有 Node 在背后，所以**不能**承载私密房间——服务端只对公开房下发镜像地址。
-https://ani-lan.kajimi.cc:8443 {
+https://{$MIRROR_HOST:ani-lan.kajimi.cc}:{$MIRROR_PORT:8443} {
 	tls ./certs/ani-lan.pem ./certs/ani-lan.key
 
 	handle_path /media/* {

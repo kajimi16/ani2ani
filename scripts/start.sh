@@ -6,8 +6,14 @@ cd "$(dirname "$0")/.."
 PORT="${PORT:-8080}"
 API_PORT="${API_PORT:-8001}"
 STUN_PORT="${STUN_PORT:-3478}"
-RUN_DIR="run"
-LOGS="logs"
+# Overridable so a second, isolated stack can run beside the live one
+# (scripts/start-dev.sh) without touching production state.
+RUN_DIR="${RUN_DIR:-run}"
+LOGS="${LOGS:-logs}"
+LOG_DIR="${LOG_DIR:-./logs}"
+CADDYFILE="${CADDYFILE:-caddy/Caddyfile}"
+# The Caddyfile reads these as {$VAR}; they must be exported, not just set.
+export PORT API_PORT STUN_PORT LOG_DIR
 
 # Segment cache policy. Default keeps immutable caching (correct for an actual
 # screening); measurement runs must export SEGMENT_CACHE_CONTROL=no-store so warm
@@ -46,7 +52,7 @@ fi
 if [[ -f "$RUN_DIR/caddy.pid" ]] && kill -0 "$(cat "$RUN_DIR/caddy.pid")" 2>/dev/null; then
   echo "caddy already running (pid $(cat "$RUN_DIR/caddy.pid"))"
 else
-  nohup caddy run --config caddy/Caddyfile --adapter caddyfile \
+  nohup caddy run --config "$CADDYFILE" --adapter caddyfile \
     >>"$LOGS/caddy.log" 2>&1 &
   echo $! >"$RUN_DIR/caddy.pid"
   echo "caddy started (pid $!) on http/$PORT"

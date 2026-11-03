@@ -107,6 +107,23 @@ bash scripts/build-player.sh
 bash scripts/start.sh
 ```
 
+### 开发栈
+
+```bash
+git worktree add --detach ../ani2ani-dev HEAD   # 一次性，scripts/dev-worktree.sh 会自动做
+bash scripts/dev-worktree.sh   # 在独立工作区起栈：8081 / 8002 / 3479 / 8444
+bash scripts/stop-dev.sh
+```
+
+```bash
+curl -s localhost:8081/api/health
+tail -f logs-dev/control.log
+```
+
+数据在 `data-dev/`，pid 在 `run-dev/`。生产 Caddy 每次请求都从 `./web` 读盘，
+所以**前端文件必须在独立工作区里改**，否则改动立刻影响 8080；只在主工作区跑
+`start-dev.sh` 只能隔离后端。改完确认再重启生产。
+
 ### 换盘
 
 ```bash
@@ -117,6 +134,7 @@ ROOM_DATA_DIR=/path/to/data bash scripts/start.sh
 
 | 房间状态 | 重启后 |
 |---|---|
-| 转码中 / 排队中 / 上传中 | 标记失败，需重新上传 |
+| 转码中 / 排队中 | 标记失败，删除后重传 |
+| 上传中 | 已收字节保留，重选同一文件续传 |
 | 放映中 | 房间与进度保留，观众重连 |
 | 已就绪 | 不受影响 |
