@@ -93,6 +93,12 @@ body.studio button {
   cursor: pointer;
 }
 
+/* 同 portal：作者样式优先于 UA 的 [hidden]{display:none}，兜底一条，
+   免得某个带 display 的类再次让 hidden 失效。 */
+body.studio [hidden] {
+  display: none;
+}
+
 body.studio :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -582,7 +588,14 @@ body.studio .stat-line dd {
   border-radius: 999px;
   background: var(--card);
   color: var(--ink-dim);
+}
+
+/* body.studio button { font: inherit } 会把这些按钮拉回 14px，而 <a> 走
+   .d-act 的 12px —— 三个入口字号不一致。统一在这里，特异性高于那条。 */
+body.studio .d-act {
+  font: inherit;
   font-size: 12px;
+  line-height: 1.4;
 }
 
 .d-act:hover {
@@ -871,6 +884,11 @@ html[data-theme="dark"] body.studio .people li .tag {
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid var(--line);
+}
+
+/* 作者样式优先于 UA 的 [hidden]{display:none}，不加这条 hidden 属性形同虚设 */
+.d-chat-input[hidden] {
+  display: none;
 }
 
 .d-chat-input input {

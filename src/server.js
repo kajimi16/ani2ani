@@ -714,6 +714,12 @@ function roomView(room) {
   const hostPresent = people.some((p) => p.isHost);
   return {
     ...rest,
+    // 旧错误不再无限期显示：房间还有可播内容时，提示 10 分钟后自动消失。
+    // 真正失败（status === "failed"）必须一直显示，房主才知道要处理。
+    error:
+      room.error && (room.status === "failed" || Date.now() - (room.errorAt ?? 0) < ROOM_ERROR_TTL_MS)
+        ? room.error
+        : null,
     settings: roomSettings(room),
     // viewerId is a capability: the sitting host proves who it is with it when
     // handing the seat over, and a voted-in host has no ownerToken at all. Never
@@ -877,7 +883,7 @@ function enqueueTranscode(room, sourceFile, episodeId) {
     busyRooms.delete(room.id);
     const episode = room.episodes?.find((entry) => entry.id === episodeId);
     if (episode) episode.status = "failed";
-    updateRoom(room.id, { status: hasReadyEpisode(room) ? "ready" : "failed", error: bad });
+    updateRoom(room.id, { status: hasReadyEpisode(room) ? "ready" : "failed", error: publicError(bad) });
     return;
   }
   const durationSec = probeDuration(sourceFile);
@@ -890,6 +896,26 @@ function enqueueTranscode(room, sourceFile, episodeId) {
   });
   transcodeQueue.push({ roomId: room.id, sourceFile, durationSec, episodeId });
   pumpTranscodeQueue();
+}
+
+/**
+ * What the browser is allowed to see.
+ *
+ * Node and ffmpeg errors carry absolute paths, module names and file contents —
+ * publishing them hands a visitor a map of the machine. The full text always
+ * goes to the control log; the client gets a short, actionable line instead.
+ */
+function publicError(error, fallback = "处理失败，请稍后重试，或换一个片源。") {
+  const text = typeof error === "string" ? error : (error?.message ?? String(error ?? ""));
+  log(`internal: ${text}`);
+  if (/ENOSPC|disk|空间/i.test(text)) return "服务器空间不足，先删掉一个旧房间，或者传一个短一点的片子。";
+  if (/exceeds limit|too large|413/i.test(text)) return "文件超过了服务器允许的大小。";
+  if (/aborted|ECONNRESET|socket hang up|premature/i.test(text)) return "上传中断，重新选择文件可以接着传。";
+  if (/received .* of .* bytes|chunk is/i.test(text)) return "上传不完整，请重试。";
+  if (/ffprobe|ffmpeg|moov|codec|Invalid data|does not contain/i.test(text)) {
+    return "这个文件无法解析，换一个片源试试。";
+  }
+  return fallback;
 }
 
 function hasReadyEpisode(room) {
@@ -1012,9 +1038,8 @@ async function runTranscode(room, sourceFile, durationSec, episodeId) {
         segments: 0,
         progress: null,
         error: diskExhausted
-          ? `disk ran out during transcoding; partial output discarded. ` +
-            `Free space (delete an old room) or upload a shorter file.`
-          : result.error,
+          ? publicError("ENOSPC: disk ran out during transcoding")
+          : publicError(result.error),
       });
     }
   });
@@ -1040,6 +1065,8 @@ async function runTranscode(room, sourceFile, durationSec, episodeId) {
 // "<source>.part" file. Sessions live in memory: a server restart mid-upload
 // leaves the room locked, which the sweep below clears.
 const uploadSessions = new Map();
+// 上传超时、单集失败这类提示会残留在房间上，10 分钟后不再展示。
+const ROOM_ERROR_TTL_MS = 10 * 60 * 1000;
 const UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000;
 
 function parseContentRange(header) {
@@ -1628,9 +1655,10 @@ async function handle(req, res) {
         } catch (error) {
           dropUploadSession(room.id);
           session.episode.status = "failed";
+          const reason = publicError(error);
           const anyReady = (getRoom(room.id)?.episodes ?? []).some((entry) => entry.status === "ready");
-          updateRoom(room.id, anyReady ? { error: error.message } : { status: "failed", error: error.message });
-          return json(res, 400, { ok: false, error: error.message });
+          updateRoom(room.id, anyReady ? { error: reason } : { status: "failed", error: reason });
+          return json(res, 400, { ok: false, error: reason });
         }
 
         session.received = range.end + 1;
@@ -1651,9 +1679,10 @@ async function handle(req, res) {
         } catch (error) {
           dropUploadSession(room.id);
           session.episode.status = "failed";
+          const reason = publicError(error);
           const anyReady = (getRoom(room.id)?.episodes ?? []).some((entry) => entry.status === "ready");
-          updateRoom(room.id, anyReady ? { error: error.message } : { status: "failed", error: error.message });
-          return json(res, 400, { ok: false, error: error.message });
+          updateRoom(room.id, anyReady ? { error: reason } : { status: "failed", error: reason });
+          return json(res, 400, { ok: false, error: reason });
         }
 
         uploadSessions.delete(room.id);
@@ -1682,9 +1711,10 @@ async function handle(req, res) {
         episode.status = "failed";
         // A failed second upload must not put an existing screening behind a
         // "处理失败" veil: only a room with nothing playable becomes failed.
+        const reason = publicError(error);
         const anyReady = (getRoom(room.id)?.episodes ?? []).some((entry) => entry.status === "ready");
-        updateRoom(room.id, anyReady ? { error: error.message } : { status: "failed", error: error.message });
-        return json(res, 400, { ok: false, error: error.message });
+        updateRoom(room.id, anyReady ? { error: reason } : { status: "failed", error: reason });
+        return json(res, 400, { ok: false, error: reason });
       }
 
       episode.bytes = result.bytes;
@@ -1871,8 +1901,7 @@ async function handle(req, res) {
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((error) => {
-    log(`request failed: ${error.stack ?? error.message}`);
-    if (!res.headersSent) json(res, 500, { ok: false, error: error.message });
+    if (!res.headersSent) json(res, 500, { ok: false, error: publicError(error, "服务器出错了，请稍后再试。") });
     else res.end();
   });
 });

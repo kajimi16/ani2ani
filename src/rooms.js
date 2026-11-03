@@ -357,6 +357,11 @@ export function updateRoom(id, patch) {
   const room = rooms.get(id);
   if (!room) return undefined;
   Object.assign(room, patch);
+  // 错误提示需要时间戳：一次失败不能永远挂在房间里。清空时同步删掉。
+  if ("error" in patch) {
+    if (patch.error) room.errorAt = Date.now();
+    else delete room.errorAt;
+  }
   saveSoon();
   return room;
 }

@@ -82,6 +82,13 @@ body.portal button {
   cursor: pointer;
 }
 
+/* 作者样式优先于 UA 的 [hidden]{display:none}：`.p-dialog-body label` 的
+   display:flex 会让「房间密码」在选择公开时也一直显示。兜底一条，优先级高于
+   任何单类选择器。 */
+body.portal [hidden] {
+  display: none;
+}
+
 body.portal :focus-visible {
   outline: 2px solid var(--p-pink);
   outline-offset: 2px;
@@ -193,7 +200,14 @@ body.portal :focus-visible {
 
 .p-search:focus-within {
   background: var(--p-surface-3);
-  border-color: var(--p-line-strong);
+  border-color: var(--p-pink);
+  box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.18);
+}
+
+/* 全局 :focus-visible 给的是矩形描边，套在胶囊输入框上就是那个粉色方块。
+   焦点样式交给外层容器，输入框自己不出轮廓。 */
+body.portal .p-search input:focus-visible {
+  outline: none;
 }
 
 .p-search input {
@@ -1587,34 +1601,50 @@ html[data-theme="dark"] body.portal .p-theme .p-moon {
   display: none;
 }
 
-.p-perm-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
+/* 每行是一句完整的话，「允许/禁止」是句首的行内文字按钮，没有独立控件。 */
+.p-perm-line {
+  margin: 0;
+  font-size: 14px;
+  line-height: 2;
   color: var(--p-text-dim);
 }
 
-.p-perm-btn {
-  min-width: 58px;
-  padding: 6px 14px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  font-size: 12px;
+/* body.portal button { font: inherit } 会把字重拉回 400，这里要压过它 */
+body.portal .p-perm-word {
+  padding: 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
   font-weight: 600;
+  color: #22c55e;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(34, 197, 94, 0.55);
   cursor: pointer;
-  transition: background 0.18s, border-color 0.18s, color 0.18s;
+  transition: color 0.15s, text-decoration-color 0.15s;
 }
 
-.p-perm-btn.is-on {
-  background: rgba(46, 160, 67, 0.18);
-  border-color: rgba(46, 160, 67, 0.55);
-  color: #3fb950;
+.p-perm-word:hover {
+  color: #16a34a;
+  text-decoration-color: currentColor;
 }
 
-.p-perm-btn.is-off {
-  background: rgba(229, 83, 75, 0.18);
-  border-color: rgba(229, 83, 75, 0.55);
-  color: #e5534b;
+body.portal .p-perm-word.is-off {
+  color: #9ca3af;
+  text-decoration-color: rgba(156, 163, 175, 0.55);
+}
+
+body.portal .p-perm-word.is-off:hover {
+  color: #6b7280;
+  text-decoration-color: currentColor;
+}
+
+html[data-theme="light"] body.portal .p-perm-line {
+  color: #374151;
+}
+
+html[data-theme="light"] body.portal .p-perm-word.is-off:hover {
+  color: #4b5563;
 }

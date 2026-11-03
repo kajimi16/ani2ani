@@ -249,6 +249,7 @@
       const fileLabel = document.getElementById("fileLabel");
       const epCards = document.getElementById("epCards");
       const danmakuComposer = document.getElementById("danmakuComposer");
+      const chatNotice = document.querySelector(".d-notice");
       const uploadMeta = document.getElementById("uploadMeta");
 
       const STATUS_TEXT = {
@@ -698,12 +699,15 @@
       let mayEditAlias = false;
       let currentPane = "danmaku";
 
-      // 侧栏底部按栏目换内容：剧集页给能上传的人显示上传控件，其余显示弹幕输入。
+      // 每个栏目只带自己的控件：弹幕页只有输入框，剧集页只有上传，
+      // 在线页什么都不显示。提示语也只在弹幕页出现。
       function syncComposer() {
         const showUpload = mayUpload && currentPane === "episodes";
-        danmakuComposer.hidden = showUpload;
+        const showDanmaku = currentPane === "danmaku";
+        danmakuComposer.hidden = !showDanmaku;
         uploadRow.hidden = !showUpload;
         uploadMeta.hidden = !showUpload;
+        if (chatNotice) chatNotice.hidden = !showDanmaku;
       }
 
       // 剧集对所有观众可见：谁在播、哪集处理到多少。

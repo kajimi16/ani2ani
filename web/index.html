@@ -127,14 +127,14 @@
           <span class="p-perm-caret" aria-hidden="true">›</span>
         </button>
         <div class="p-perm" id="permPanel" hidden>
-          <div class="p-perm-row">
-            <span>允许观众发送弹幕</span>
-            <button class="p-perm-btn" type="button" data-perm="viewerDanmaku">允许</button>
-          </div>
-          <div class="p-perm-row">
-            <span>允许观众上传视频</span>
-            <button class="p-perm-btn" type="button" data-perm="viewerUpload">允许</button>
-          </div>
+          <p class="p-perm-line">
+            <button class="p-perm-word is-on" type="button" role="button" aria-pressed="true"
+                    data-perm="viewerDanmaku">允许</button>观众发送弹幕
+          </p>
+          <p class="p-perm-line">
+            <button class="p-perm-word is-on" type="button" role="button" aria-pressed="true"
+                    data-perm="viewerUpload">允许</button>观众上传视频
+          </p>
         </div>
         <p class="p-hint" id="dialogHint" hidden></p>
         <div class="p-dialog-actions">
@@ -236,7 +236,7 @@
           const on = roomPerms[button.dataset.perm];
           button.classList.toggle("is-on", on);
           button.classList.toggle("is-off", !on);
-          button.textContent = on ? "允许" : "拒绝";
+          button.textContent = on ? "允许" : "禁止";
           button.setAttribute("aria-pressed", String(on));
         }
         permSummary.textContent =
