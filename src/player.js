@@ -123,6 +123,29 @@ function stunUrl() {
   return `stun:${location.hostname}:${STUN_PORT}`;
 }
 
+/**
+ * ICE servers for the P2P engine.
+ *
+ * The campus STUN is on the same host as the page, which means it is reachable
+ * only from inside the campus network — an off-campus viewer (behind the reverse
+ * proxy) can never get a server-reflexive candidate from it, so it can neither
+ * connect to nor seed for other remote peers.
+ *
+ * Public STUN servers are free and need no account. Listing them alongside the
+ * campus one costs a few extra binding requests and makes remote-to-remote
+ * hole punching possible: one remote viewer pulls a segment over HTTPS, the rest
+ * take it from that viewer over WebRTC.
+ */
+function iceServers() {
+  const servers = [{ urls: stunUrl() }];
+  // `?stun=` overrides entirely, for pointing at a self-hosted STUN.
+  const override = params.get("stun");
+  if (override) return [{ urls: override }];
+  servers.push({ urls: "stun:stun.l.google.com:19302" });
+  servers.push({ urls: "stun:stun.cloudflare.com:3478" });
+  return servers;
+}
+
 /* -------------------------------------------------------------- lead/follow */
 
 // Lead/follow roles — opt-in, default follow.
@@ -159,7 +182,7 @@ const hls = new HlsWithP2P({
       announceTrackers: [signalingUrl()],
       // Only the campus-local STUN is advertised: a server-reflexive candidate
       // valid across HITSZ subnets, which mDNS host candidates cannot provide.
-      rtcConfig: { iceServers: [{ urls: stunUrl() }] },
+      rtcConfig: { iceServers: iceServers() },
       // Prefetch horizons must stay well under a measurement's steady window,
       // otherwise playback can advance for minutes with zero bytes moving.
       // The HTTP horizon may never be smaller than the buffer: a peer whose

@@ -81,6 +81,11 @@ bash scripts/stop.sh      # 干净收掉，无残留
 - **STUN 必须自建在校内**：Chrome 把 host 候选替换成 `.local`（mDNS），跨子网不可解析；
   校内 STUN 返回的 `srflx` 就是观众自己的校园网地址，对方可直接路由。实测 1898 次 Binding 请求、
   825 次来自 `10.249.x.x`，说明这条路径确实在用。
+- **校外观众要额外挂公共 STUN**：自建 STUN 与页面同主机，校外（经反代）根本发不过去 UDP，
+  拿不到 `srflx` 就只剩内网候选，无法与任何远端打洞。因此 ICE 列表里并排加了
+  `stun.l.google.com:19302` 与 `stun.cloudflare.com:3478`；实测三者都能返回 `srflx`。
+  这样「一个校外观众先从隧道拉一片，其余校外观众从他那里取」才成立 —— 前提是双方不都在
+  对称 NAT/CGNAT 后面，那种情况只能靠 TURN 中继（= 服务器带宽）。
 - 端口全部高位（8080/8001/3478 UDP），全程用户态，`Ctrl-C` 即净。不需要 `sudo`、systemd、TLS。
 
 ## 5. 播放器参数（每个都有实测理由）
@@ -94,7 +99,7 @@ bash scripts/stop.sh      # 干净收掉，无残留
 | `swarmId` | `hitsz-screening` 等固定值 | 同一 swarm 才能互相发现；换成随机值等于关掉 P2P |
 | 共享播放时钟（默认开） | 服务端 `sync.epochMs`，播放器按 `(now−epoch) mod duration` 定位 | 这是「进网页就能一起看」的实现：晚到者直接落到同一帧（实测 3 台误差 ≤0.3 s）。关掉后只有同时刷新才同步，且晚到者从 0 起播会拉低 P2P |
 | `?sync=off` | 退回从 0 起播 | 调试/单人回看用 |
-| `rtcConfig.iceServers` | 仅 `stun:<当前主机>:3478` | 不引入公网 STUN（避免把校内地址暴露给外部服务），也不引入 TURN（无中继预算） |
+| `rtcConfig.iceServers` | 校内 `stun:<主机>:3478` + `stun.l.google.com` + `stun.cloudflare.com`，可用 `?stun=` 覆盖 | 只留校内 STUN 时，校外观众发不到 UDP 3478、拿不到 srflx，等于没有 P2P。代价是候选发现会把客户端公网 IP 交给 Google/Cloudflare —— 但开启 P2P 后对端本来就会知道彼此的地址。仍不引入 TURN（无中继预算） |
 | `?p2p=off`（URL 开关） | 应急关闭 | hitsz 若中途封锁 WebRTC，同一页面加参数即回退纯 HTTP；已实测：`peers=0`、HTTP 字节正常累计、播放不受影响 |
 | 角色默认值 | **全员 follow（缓冲 20 s）** | 库的 demand window 已把回源摊平：N=6 实测最大仅 1.45× 公平份额。加 lead 反而把回源集中到一台（4.50×、独占 75%），在 WiFi 上是亏的 —— 详见报告 §5.4 |
 | `?role=lead`（缓冲 90 s） | **仅在回源退化时**手动指定 | 判据：`verify-round.sh` 输出 `worst/fair > 2.0`。此时把有线口、上行最好的那台设为 lead，好过随机一台成为受害者 |
