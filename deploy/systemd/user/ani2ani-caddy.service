@@ -1,0 +1,18 @@
+[Unit]
+Description=ani2ani Caddy (screening origin :8080, media mirror :8443)
+After=ani2ani-node.service network-online.target
+Wants=network-online.target ani2ani-node.service
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+EnvironmentFile=-__ROOT__/.env
+Environment=PORT=8080
+Environment=API_PORT=8001
+Environment=LOG_DIR=./logs
+ExecStart=/usr/bin/caddy run --config caddy/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

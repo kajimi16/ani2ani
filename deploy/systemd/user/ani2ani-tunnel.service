@@ -1,0 +1,17 @@
+[Unit]
+Description=ani2ani Cloudflare quick tunnel (校外临时入口)
+After=network-online.target ani2ani-caddy.service
+Wants=network-online.target ani2ani-caddy.service
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+# 出站要先经过本机代理；QUIC 走不通时强制 HTTP/2。
+Environment=HTTPS_PROXY=http://127.0.0.1:7897
+Environment=HTTP_PROXY=http://127.0.0.1:7897
+ExecStart=%h/.local/bin/cloudflared tunnel --url http://localhost:8080 --no-autoupdate --protocol http2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

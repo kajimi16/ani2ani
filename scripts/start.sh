@@ -12,6 +12,17 @@ RUN_DIR="${RUN_DIR:-run}"
 LOGS="${LOGS:-logs}"
 LOG_DIR="${LOG_DIR:-./logs}"
 CADDYFILE="${CADDYFILE:-caddy/Caddyfile}"
+
+# Production is supervised by systemd once installed; starting a second copy on
+# the same ports would only produce bind errors. Dev stacks keep their own
+# RUN_DIR and are unaffected.
+if [[ "$RUN_DIR" == "run" ]] && command -v systemctl >/dev/null 2>&1 &&
+  systemctl --user is-active --quiet ani2ani-node.service 2>/dev/null; then
+  echo "production is managed by systemd:" >&2
+  echo "  systemctl --user restart ani2ani-node ani2ani-caddy" >&2
+  echo "  systemctl --user status ani2ani-node" >&2
+  exit 1
+fi
 # The Caddyfile reads these as {$VAR}; they must be exported, not just set.
 export PORT API_PORT STUN_PORT LOG_DIR
 

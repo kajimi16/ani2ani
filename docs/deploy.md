@@ -77,16 +77,17 @@ bash scripts/check-stack.sh
 ### 日常
 
 ```bash
-bash scripts/start.sh          # 启动
-bash scripts/stop.sh           # 停止
+systemctl --user start ani2ani-node ani2ani-caddy ani2ani-tunnel
+systemctl --user stop ani2ani-node ani2ani-caddy ani2ani-tunnel
+systemctl --user restart ani2ani-node
 bash scripts/check-stack.sh    # 自检
 ```
 
 ```bash
 curl -s localhost:8080/api/health
 curl -s localhost:8080/api/rooms
-tail -f logs/control.log
-tail -f logs/access.log
+journalctl --user -u ani2ani-node -f      # node 日志（systemd 接管后不再写 logs/control.log）
+tail -f logs/access.log                   # Caddy 访问日志
 ```
 
 ### 升级
@@ -94,8 +95,8 @@ tail -f logs/access.log
 ```bash
 git pull --ff-only
 npm ci
-bash scripts/build-player.sh   # 不能省，start.sh 不会重打包
-bash scripts/start.sh
+bash scripts/build-player.sh              # 不能省，重启不会重打包
+systemctl --user restart ani2ani-node ani2ani-caddy
 ```
 
 ### 回滚
@@ -104,7 +105,36 @@ bash scripts/start.sh
 git checkout <提交或标签>
 npm ci
 bash scripts/build-player.sh
-bash scripts/start.sh
+systemctl --user restart ani2ani-node ani2ani-caddy
+```
+
+### 开机自启
+
+```bash
+bash scripts/install-user-services.sh          # 装单元 + 开 linger（会要一次 sudo）
+systemctl --user daemon-reload
+systemctl --user enable --now ani2ani-node ani2ani-caddy ani2ani-tunnel
+```
+
+```bash
+systemctl --user status ani2ani-node ani2ani-caddy ani2ani-tunnel
+systemctl --user restart ani2ani-node
+journalctl --user -u ani2ani-node -f
+loginctl show-user "$USER" -p Linger --value
+```
+
+```bash
+# 系统启动后自动运行，不需要登录；进程崩溃 3 秒后自动拉起
+systemctl --user is-enabled ani2ani-node
+```
+
+配置在 `.env`（systemd 的 `EnvironmentFile`）。`start.sh` / `stop.sh` 在 systemd
+接管后会拒绝执行，避免抢端口。
+
+隧道地址每次重启都会变：
+
+```bash
+journalctl --user -u ani2ani-tunnel -n 50 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1
 ```
 
 ### 开发栈

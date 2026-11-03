@@ -1,0 +1,17 @@
+[Unit]
+Description=ani2ani control plane (rooms, tracker, danmaku)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+EnvironmentFile=-__ROOT__/.env
+Environment=PATH=%h/.n/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.n/bin/node src/server.js
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target
