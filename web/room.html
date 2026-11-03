@@ -344,7 +344,9 @@
           uploadBar.style.width = `${percent}%`;
           uploadHint.textContent = `处理中 ${percent.toFixed(0)}%${room.progress.speed ? ` · ${room.progress.speed}` : ""}`;
         } else if (resumableUpload && !room.progress) {
-          uploadBar.style.width = `${(resumableUpload.received / resumableUpload.total) * 100}%`;
+          uploadBar.style.width = resumableUpload.total
+            ? `${(resumableUpload.received / resumableUpload.total) * 100}%`
+            : "0%";
           uploadHint.textContent =
             `上次上传中断：已收到 ${humanBytes(resumableUpload.received)}，重新选择同一文件会接着传`;
         } else if (room.status === "ready" && room.sourceName) {
@@ -959,9 +961,11 @@
           const previous = await fetchUploadStatus();
           // Same size but a different name means the host swapped files; splice
           // would silently mix two videos, so only resume when both match.
+          // total 0 means the server rebuilt the session from a partial file
+          // after a restart and has not been told the size yet.
           const sameFile =
             previous?.uploading &&
-            previous.total === file.size &&
+            (previous.total === 0 || previous.total === file.size) &&
             previous.received < file.size &&
             (!previous.name || previous.name === file.name);
           if (sameFile) {

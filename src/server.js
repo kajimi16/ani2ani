@@ -1563,6 +1563,7 @@ async function handle(req, res) {
           session.episode.status = "transcoding";
           session.updatedAt = Date.now();
         }
+        if (session.total === 0) session.total = range.total;
         if (range.total !== session.total) {
           return json(res, 409, { ok: false, error: "分片总大小与本次上传不一致", received: session.received });
         }
@@ -1664,7 +1665,10 @@ async function handle(req, res) {
       if (room.currentEpisodeId === episodeId) {
         return json(res, 409, { ok: false, error: "这一集正在使用，先切到别的集再删" });
       }
-      if (episode.status === "transcoding") {
+      // "transcoding" alone is not enough: a restart leaves episodes stuck in
+      // that state with no job behind them, and they must stay deletable.
+      const liveJob = transcodeJobs.has(room.id) || uploadSessions.has(room.id);
+      if (episode.status === "transcoding" && liveJob) {
         return json(res, 409, { ok: false, error: "这一集还在处理中" });
       }
 
@@ -1841,6 +1845,54 @@ function scanExternalEpisodes() {
   }
 }
 
+// A previous process may have died mid-transcode or mid-upload. Those in-memory
+// jobs are gone, so their episodes would sit in "transcoding" forever, occupying
+// an episode slot and blocking their own deletion. Rebuild what can still be
+// resumed from the partial file and fail the rest.
+function recoverInterruptedWork() {
+  let recovered = 0;
+  let failed = 0;
+  for (const view of listRooms()) {
+    const room = getRoom(view.id);
+    if (!room) continue;
+    for (const episode of room.episodes ?? []) {
+      if (episode.status !== "transcoding" && episode.status !== "queued") continue;
+      const destination = sourcePath(room.id, safeExtension(episode.name ?? "source"), episode.id);
+      let partial = 0;
+      try {
+        partial = fs.statSync(`${destination}.part`).size;
+      } catch {
+        partial = 0;
+      }
+      if (partial > 0) {
+        busyRooms.add(room.id);
+        uploadSessions.set(room.id, {
+          episode,
+          destination,
+          received: partial,
+          total: 0, // unknown until the client reports it
+          updatedAt: Date.now(),
+        });
+        recovered += 1;
+      } else {
+        episode.status = "failed";
+        episode.error = "服务重启，处理中断";
+        failed += 1;
+      }
+    }
+    const anyReady = (room.episodes ?? []).some((entry) => entry.status === "ready");
+    if (!anyReady) {
+      updateRoom(room.id, { status: "failed", error: "服务重启，处理中断" });
+    } else if (room.status === "transcoding" || room.status === "queued") {
+      updateRoom(room.id, { status: "ready", error: null, progress: null });
+    }
+  }
+  if (recovered || failed) {
+    log(`recovery: ${recovered} resumable upload(s), ${failed} failed episode(s)`);
+  }
+}
+
+recoverInterruptedWork();
 sweepIdleRooms();
 scanExternalEpisodes();
 setInterval(() => sweepIdleRooms(), 60_000).unref();
