@@ -134,7 +134,13 @@
         <button class="p-onboard-close" type="button" data-close-onboard aria-label="关闭">×</button>
 
         <div class="mg-stage">
-          <section class="mg-scene is-active" data-scene="0" aria-hidden="true">
+          <section class="mg-scene is-active" data-scene="3" aria-hidden="true">
+            <div class="mg-bar">
+              <span class="mg-avatar"><b class="mg-avatar-old">放</b><b class="mg-avatar-new">阿</b></span>
+              <span class="mg-namefield"><em>阿伟</em></span>
+            </div>
+          </section>
+          <section class="mg-scene" data-scene="0" aria-hidden="true">
             <div class="mg-file"><em>片源.mp4</em><span class="mg-file-bar"></span></div>
             <div class="mg-rail"><i></i></div>
             <div class="mg-box">
@@ -175,6 +181,7 @@
             <button class="is-active" type="button" aria-label="第 1 步"></button>
             <button type="button" aria-label="第 2 步"></button>
             <button type="button" aria-label="第 3 步"></button>
+            <button type="button" aria-label="第 4 步"></button>
           </div>
           <button class="p-quiet" type="button" data-close-onboard>跳过</button>
           <button class="p-primary" id="onboardNext" type="button">下一步</button>
@@ -410,6 +417,7 @@
       const onboardNext = document.getElementById("onboardNext");
 
       const ONBOARD_COPY = [
+        { title: "起个名字", text: "点右上角的头像给自己起名字，弹幕和在线列表里都会显示它。" },
         { title: "创建房间", text: "上传想要放映的片源即可创建属于你的放映室。" },
         { title: "弹幕体验", text: "进入你的房间，一起用弹幕交流吧。" },
         { title: "同步播放", text: "进度与房主同步，当然也能自己回放精彩片段。" },

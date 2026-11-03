@@ -1426,3 +1426,115 @@ html[data-theme="dark"] body.portal .p-theme .p-sun {
 html[data-theme="dark"] body.portal .p-theme .p-moon {
   display: none;
 }
+
+/* --- scene 4: click the avatar to name yourself --- */
+
+.mg-scene[data-scene="3"] {
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mg-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--p-line-strong);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mg-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--p-pink);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mg-avatar b {
+  font-weight: 600;
+  grid-area: 1 / 1;
+}
+
+.mg-avatar-old,
+.mg-avatar-new {
+  transition: opacity 0.25s;
+}
+
+.mg-avatar-new {
+  opacity: 0;
+}
+
+.mg-scene.is-active .mg-avatar-old {
+  animation: mg-avatar-fade 5.4s ease-out both;
+}
+
+.mg-scene.is-active .mg-avatar-new {
+  animation: mg-avatar-swap 5.4s ease-out both;
+}
+
+@keyframes mg-avatar-fade {
+  0%, 62% { opacity: 1; }
+  74%, 100% { opacity: 0; }
+}
+
+@keyframes mg-avatar-swap {
+  0%, 62% { opacity: 0; }
+  74%, 100% { opacity: 1; }
+}
+
+.mg-namefield {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 12px;
+  overflow: hidden;
+  width: 0;
+  opacity: 0;
+}
+
+.mg-namefield em {
+  font-style: normal;
+  display: block;
+  width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 点头像 → 输入框张开 → 名字逐字出现 */
+.mg-scene.is-active .mg-avatar {
+  animation: mg-avatar-tap 5.4s ease-out both;
+}
+
+.mg-scene.is-active .mg-namefield {
+  animation: mg-field-open 5.4s ease-out both;
+}
+
+.mg-scene.is-active .mg-namefield em {
+  animation: mg-name-type 5.4s steps(2, end) both;
+}
+
+@keyframes mg-avatar-tap {
+  0% { transform: scale(0.85); opacity: 0; }
+  12% { transform: scale(1.12); opacity: 1; }
+  20%, 100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes mg-field-open {
+  0%, 22% { width: 0; opacity: 0; }
+  42%, 100% { width: 116px; opacity: 1; }
+}
+
+@keyframes mg-name-type {
+  0%, 46% { width: 0; }
+  68%, 100% { width: 2em; }
+}
