@@ -108,6 +108,16 @@
 		file_server
 	}
 
+	# Which P2P group this origin serves. Campus viewers exchange segments with
+	# the campus origin; external viewers arrive through the edge proxy, which
+	# answers the same path with "ext". Separate swarms: hole punching across the
+	# campus NAT and the VPS rarely succeeds, so mixed swarms only waste ICE time.
+	handle /view.js {
+		header Content-Type application/javascript
+		header Cache-Control "no-store"
+		respond "window.__VIEW__='campus';"
+	}
+
 	# Player page and bundle: never cache, so a redeploy is visible on reload.
 	handle {
 		header Cache-Control "no-store"

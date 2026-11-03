@@ -24,6 +24,13 @@
 		level INFO
 	}
 
+	# 校外这一路属于独立的 P2P 组，见 campus 侧同名 handler 的说明。
+	handle /view.js {
+		header Content-Type application/javascript
+		header Cache-Control "no-store"
+		respond "window.__VIEW__='ext';"
+	}
+
 	# 隧道没连上时给出可读的 502，而不是空白页
 	handle_errors {
 		respond "{err.status_code} {err.status_text}" {err.status_code}

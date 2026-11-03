@@ -81,6 +81,12 @@ const roomId = (() => {
 // Replaced at runtime when the host switches episodes: each episode has its own
 // HLS directory, so the URL is part of the room state, not a constant.
 let manifestUrl = roomId ? `/media/${roomId}/hls/index.m3u8` : "/hls/stream/index.m3u8";
+// Which P2P group this page belongs to. Served by Caddy as a tiny script:
+// campus origins answer "campus", the edge proxy answers "ext". Apart from the
+// origin, the two groups have nothing in common — a campus peer has no public
+// address for an external one to reach, so mixing them only burns ICE time.
+const viewKey = window.__VIEW__ === "ext" ? "ext" : "campus";
+
 // Per-room swarm: viewers of different rooms must never exchange segments.
 const SWARM_ID = roomId ? `hitsz-room-${roomId}` : "hitsz-screening";
 // ...and per-episode within the room. The library derives the swarm from the
@@ -89,6 +95,9 @@ const SWARM_ID = roomId ? `hitsz-room-${roomId}` : "hitsz-screening";
 // and `seg_0001` — peers would hand each other the wrong episode. This is read on
 // every loadSource, so switching episodes moves the room to a different swarm.
 let episodeKey = null;
+// The swarm id the engine actually used, for stats and for confirming that the
+// campus and external groups really are separate.
+let currentSwarmId = null;
 // The episode this page has been showing. A change is handled by a full reload
 // rather than an in-place switch: a long-lived mobile tab keeps both the HTTP
 // cache (segments are immutable) and the p2p engine's stored segments, and those
@@ -204,8 +213,11 @@ const hls = new HlsWithP2P({
   p2p: {
     core: {
       swarmId: SWARM_ID,
-      streamSwarmIdBuilder: ({ defaultStreamSwarmId }) =>
-        episodeKey ? `${defaultStreamSwarmId}--ep-${episodeKey}` : undefined,
+      streamSwarmIdBuilder: ({ defaultStreamSwarmId }) => {
+        const id = episodeKey ? `${defaultStreamSwarmId}--ep-${episodeKey}--${viewKey}` : defaultStreamSwarmId;
+        currentSwarmId = id;
+        return id;
+      },
       announceTrackers: [signalingUrl()],
       // Only the campus-local STUN is advertised: a server-reflexive candidate
       // valid across HITSZ subnets, which mDNS host candidates cannot provide.
@@ -836,7 +848,8 @@ window.__screening = {
   peers: () => peerIds.size,
   counters,
   roomId,
-  swarmId: SWARM_ID,
+  // Live: the engine only knows the final id after loadSource.
+  swarmId: () => currentSwarmId,
   signalingUrl: signalingUrl(),
   stunUrl: stunUrl(),
   loadSource,
