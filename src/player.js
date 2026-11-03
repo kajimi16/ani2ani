@@ -94,6 +94,33 @@ let episodeKey = null;
 // cache (segments are immutable) and the p2p engine's stored segments, and those
 // outlive the code that was supposed to separate them.
 let loadedEpisodeId = null;
+// Which origin the current episode's playlist came from, so the probe runs once.
+let mirrorCache = { key: null, url: null };
+
+/**
+ * Playlist URL for the current episode: a reachable mirror if one answers, else
+ * the canonical origin. Probed once per episode and cached.
+ */
+async function resolveManifest(mediaBase, mirrors, cacheKey) {
+  if (!mediaBase) return null;
+  const canonical = `${mediaBase}index.m3u8`;
+  if (mirrorCache.key === cacheKey && mirrorCache.url) return mirrorCache.url;
+  for (const mirror of mirrors ?? []) {
+    try {
+      const url = `${mirror}index.m3u8`;
+      const response = await fetch(url, { method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(1200) });
+      if (!response.ok) continue;
+      mirrorCache = { key: cacheKey, url };
+      statusEl.dataset.mediaMirror = mirror;
+      return url;
+    } catch {
+      /* unreachable from here: try the next origin */
+    }
+  }
+  mirrorCache = { key: cacheKey, url: canonical };
+  statusEl.dataset.mediaMirror = "origin";
+  return canonical;
+}
 
 const counters = {
   downP2P: 0,
@@ -564,7 +591,14 @@ async function refreshRoom() {
     if (nextEpisodeId) loadedEpisodeId = nextEpisodeId;
 
     episodeKey = nextEpisodeId ?? episodeKey;
-    const nextManifest = roomState?.mediaBase ? `${roomState.mediaBase}index.m3u8` : null;
+    // Same episode, two origins: a viewer on the campus LAN should pull from the
+    // local copy rather than over the WAN. Mirrors are probed once per episode;
+    // whichever answers first wins, and the canonical origin is the fallback.
+    const nextManifest = await resolveManifest(
+      roomState?.mediaBase,
+      roomState?.mediaMirrors,
+      `${roomId}:${roomState?.currentEpisodeId ?? ""}`,
+    );
     if (nextManifest && nextManifest !== manifestUrl) {
       manifestUrl = nextManifest;
       sourceLoaded = true;

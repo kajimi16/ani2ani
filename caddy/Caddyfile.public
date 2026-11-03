@@ -1,0 +1,88 @@
+# 公网部署用的 Caddy 配置（VPS）。
+#
+# 与本地的 caddy/Caddyfile 的区别：
+#   - 直接用域名 + 自动 HTTPS（Let's Encrypt HTTP-01），不需要前面再挂 nginx
+#   - 监听 80/443，因此需要 root 或 CAP_NET_BIND_SERVICE
+#   - 静态资源与媒体都从这里出，Node 只负责 API / tracker / 弹幕
+#
+# 启动：caddy run --config caddy/Caddyfile.public --adapter caddyfile
+
+{
+	admin off
+	persist_config off
+	email {$ACME_EMAIL:admin@example.com}
+}
+
+# 把 http 一律跳 https；Caddy 的自动 HTTPS 自己会处理 ACME 的 80 端口。
+{$SITE_ADDRESS:ani2.kajimi.cc} {
+	encode zstd gzip
+
+	log {
+		output file ./logs/access.log {
+			roll_size 512MiB
+			roll_keep 3
+		}
+		format json
+		level INFO
+	}
+
+	# 信令（tracker）与弹幕都是 WebSocket，走同一个 Node 进程。
+	handle /tracker* {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	handle /ws/* {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	# 每集的分片与清单。私密房间靠这个子请求把关：Caddy 先问 Node 一句，
+	# 2xx 才继续发文件。没有它，私密房的分片可以直接按 URL 抓走。
+	handle_path /media/* {
+		forward_auth 127.0.0.1:8001 {
+			uri /api/media-auth
+		}
+
+		@manifest path *.m3u8
+		header @manifest Cache-Control "no-store"
+
+		@segment path *.ts
+		header @segment Content-Type "video/mp2t"
+		header @segment Cache-Control "{$SEGMENT_CACHE_CONTROL:public, max-age=31536000, immutable}"
+
+		header Access-Control-Allow-Origin "*"
+		root * {$ROOM_MEDIA_ROOT:./data/rooms}
+		file_server
+	}
+
+	handle /vendor/* {
+		header Cache-Control "public, max-age=31536000, immutable"
+		root * ./web
+		file_server
+	}
+
+	handle /fonts/* {
+		header Content-Type "font/woff2"
+		header Cache-Control "public, max-age=31536000, immutable"
+		header Access-Control-Allow-Origin "*"
+		root * ./web
+		file_server
+	}
+
+	# /r/<id> 是房间壳，id 由页面从路径里读
+	handle /r/* {
+		rewrite * /room.html
+		header Cache-Control "no-store"
+		root * ./web
+		file_server
+	}
+
+	handle {
+		header Cache-Control "no-store"
+		root * ./web
+		file_server
+	}
+}

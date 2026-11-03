@@ -33,6 +33,7 @@ import {
   noteHostPosition,
   posterPath,
   removeRoom,
+  roomDir,
   save as saveRooms,
   setHost,
   sourcePath,
@@ -132,6 +133,16 @@ const LIVE_WINDOW_MS = 15_000;
 // noise; a host going quiet means the screening has no leader, and taking the room
 // away from someone whose phone merely locked is worse than waiting.
 const HOST_TIMEOUT_MS = Number(process.env.ROOM_HOST_TIMEOUT_S ?? 30) * 1000;
+
+/**
+ * Additional origins that serve the same /media tree, offered to clients so a
+ * viewer on the campus LAN can pull segments from a local copy instead of over
+ * the WAN. Comma-separated origins, e.g. "http://10.249.x.x:8080".
+ */
+const MEDIA_MIRRORS = (process.env.MEDIA_MIRRORS ?? "")
+  .split(",")
+  .map((value) => value.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
 
 const log = (message) => process.stderr.write(`[${new Date().toISOString()}] ${message}\n`);
 
@@ -595,6 +606,76 @@ function senderHoldsHostSeat(req, room, body) {
 }
 
 /** Media prefix of the episode that is currently screening, if it can play. */
+/**
+ * Metadata for an episode that was transcoded elsewhere and pushed here.
+ * Prefers the `episode.json` the build script writes; falls back to parsing the
+ * playlist so a hand-copied directory still registers.
+ */
+function readEpisodeMeta(dir) {
+  const metaFile = path.join(dir, "episode.json");
+  if (fs.existsSync(metaFile)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaFile, "utf8"));
+      return {
+        name: String(meta.name ?? path.basename(dir)).slice(0, 120),
+        durationSec: Number(meta.durationSec) || 0,
+        segments: Number(meta.segments) || 0,
+      };
+    } catch {
+      /* fall through to the playlist */
+    }
+  }
+  const manifest = path.join(dir, "hls", "index.m3u8");
+  if (!fs.existsSync(manifest)) return null;
+  let durationSec = 0;
+  let segments = 0;
+  for (const line of fs.readFileSync(manifest, "utf8").split("\n")) {
+    if (line.startsWith("#EXTINF:")) durationSec += Number.parseFloat(line.slice(8)) || 0;
+    else if (line.trim().endsWith(".ts")) segments += 1;
+  }
+  return { name: path.basename(dir), durationSec: Math.round(durationSec), segments };
+}
+
+/**
+ * Register episodes that appeared on disk without going through this process —
+ * the normal case once transcoding runs on a fast machine and the output is
+ * rsynced here.
+ */
+function discoverEpisodes(room) {
+  const base = path.join(roomDir(room.id), "ep");
+  if (!fs.existsSync(base)) return false;
+  let changed = false;
+  for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    // `.incoming-*` is a half-transferred episode: only the final rename means the
+    // copy is complete, so never register a staged directory.
+    if (entry.name.startsWith(".")) continue;
+    if ((room.episodes ?? []).length >= MAX_EPISODES) break;
+    if ((room.episodes ?? []).some((episode) => episode.id === entry.name)) continue;
+    const meta = readEpisodeMeta(path.join(base, entry.name));
+    if (!meta || meta.segments === 0) continue;
+    room.episodes = [
+      ...(room.episodes ?? []),
+      {
+        id: entry.name,
+        name: meta.name,
+        bytes: 0,
+        durationSec: meta.durationSec,
+        segments: meta.segments,
+        status: "ready",
+        createdAt: Date.now(),
+        external: true,
+      },
+    ];
+    room.currentEpisodeId = room.currentEpisodeId ?? entry.name;
+    if (!["live", "ended"].includes(room.status)) room.status = "ready";
+    log(`room ${room.id}: registered external episode ${entry.name} (${meta.segments} segments)`);
+    changed = true;
+  }
+  if (changed) saveRooms();
+  return changed;
+}
+
 function readyMediaBase(room) {
   const episode = currentEpisode(room);
   if (!episode || episode.status !== "ready") return null;
@@ -631,6 +712,14 @@ function roomView(room) {
     })),
     currentEpisodeId: currentEpisode(room)?.id ?? null,
     mediaBase: readyMediaBase(room),
+    // Same tree, different origin: the client picks whichever answers first.
+    // Mirrors are plain file servers: they cannot check the access cookie that
+    // gates a private room, so offering them there would hand that room's segments
+    // to anyone on the LAN. Public rooms only.
+    mediaMirrors:
+      !isPrivate(room) && room.episodes?.length && MEDIA_MIRRORS.length
+        ? MEDIA_MIRRORS.map((origin) => `${origin}${episodeMediaBase(room.id, currentEpisode(room))}hls/`)
+        : [],
     poster: posterUrl(room),
     viewers: people.length,
     // `hostAway` is what lets the UI say "房主已离开" instead of silently drifting
@@ -1538,8 +1627,17 @@ server.on("upgrade", (req, socket, head) => {
 
 loadRooms();
 // Runs before the first request so a restart immediately reconciles the disk.
+function scanExternalEpisodes() {
+  for (const listed of listRooms()) {
+    const room = getRoom(listed.id);
+    if (room) discoverEpisodes(room);
+  }
+}
+
 sweepIdleRooms();
+scanExternalEpisodes();
 setInterval(() => sweepIdleRooms(), 60_000).unref();
+setInterval(scanExternalEpisodes, 30_000).unref();
 
 server.listen(API_PORT, "127.0.0.1", () => log(`api + tracker on http://127.0.0.1:${API_PORT}`));
 

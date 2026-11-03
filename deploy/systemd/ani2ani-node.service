@@ -1,0 +1,17 @@
+[Unit]
+Description=ani2ani control plane (rooms, tracker, danmaku)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/ani2ani
+EnvironmentFile=-/srv/ani2ani/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=3
+# 转码在这台机器上不做，但保留 ffmpeg 的路径给残留的探测逻辑
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

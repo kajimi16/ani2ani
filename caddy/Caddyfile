@@ -115,3 +115,24 @@
 		file_server
 	}
 }
+
+# 校内媒体镜像。只做同一件事：把 /media 用 HTTPS 发出去，让校内观众绕开 VPS 的
+# 带宽。没有 Node 在背后，所以**不能**承载私密房间——服务端只对公开房下发镜像地址。
+https://ani-lan.kajimi.cc:8443 {
+	tls ./certs/ani-lan.pem ./certs/ani-lan.key
+
+	handle_path /media/* {
+		@manifest path *.m3u8
+		header @manifest Cache-Control "no-store"
+
+		@segment path *.ts
+		header @segment Content-Type "video/mp2t"
+		header @segment Cache-Control "{$SEGMENT_CACHE_CONTROL:public, max-age=31536000, immutable}"
+
+		header Access-Control-Allow-Origin "*"
+		root * {$ROOM_MEDIA_ROOT:./data/rooms}
+		file_server
+	}
+
+	respond 404
+}
