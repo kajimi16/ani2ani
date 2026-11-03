@@ -1011,6 +1011,112 @@ async function runTranscode(room, sourceFile, durationSec, episodeId) {
  * per-upload cap, so a cap-only check could still fill the root filesystem and
  * take the whole stack — and the OS — down mid-screening.
  */
+
+// --- chunked uploads -------------------------------------------------------
+// Cloudflare caps a single request body at 100 MB (free plan), so the browser
+// slices the file and each slice is written at its own offset into the same
+// "<source>.part" file. Sessions live in memory: a server restart mid-upload
+// leaves the room locked, which the sweep below clears.
+const uploadSessions = new Map();
+const UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000;
+
+function parseContentRange(header) {
+  const match = String(header ?? "").match(/^bytes\s+(\d+)-(\d+)\/(\d+)$/);
+  if (!match) return null;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const total = Number(match[3]);
+  if (!Number.isFinite(total) || total <= 0) return null;
+  if (end < start || end >= total) return null;
+  return { start, end, total };
+}
+
+function createEpisode(room, filename) {
+  const episode = {
+    id: crypto.randomUUID().slice(0, 8),
+    name: filename,
+    bytes: 0,
+    durationSec: 0,
+    segments: 0,
+    status: "transcoding",
+    createdAt: Date.now(),
+  };
+  const destination = sourcePath(room.id, safeExtension(filename), episode.id);
+  // Each episode owns a directory; nothing else creates it for us.
+  fs.mkdirSync(episodeDir(room.id, episode.id), { recursive: true });
+  room.episodes = [...(room.episodes ?? []), episode];
+  room.currentEpisodeId = room.currentEpisodeId ?? episode.id;
+  // Only a room that cannot play anything yet reports the upload state as its
+  // own status; a live screening stays live while a second episode processes.
+  updateRoom(room.id, {
+    status: room.status === "live" || room.status === "ended" ? room.status : "transcoding",
+    error: null,
+    progress: null,
+  });
+  return { episode, destination };
+}
+
+function receiveChunk(req, destination, start, expected) {
+  return new Promise((resolve, reject) => {
+    const parts = [];
+    let size = 0;
+    const fail = (error) => {
+      req.destroy();
+      reject(error);
+    };
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_UPLOAD_BYTES) {
+        fail(new Error(`chunk exceeds limit (${Math.round(MAX_UPLOAD_BYTES / 1048576)} MiB)`));
+        return;
+      }
+      parts.push(chunk);
+    });
+    req.on("aborted", () => reject(new Error("upload aborted by client")));
+    req.on("error", reject);
+    req.on("end", () => {
+      const buffer = Buffer.concat(parts);
+      if (buffer.length !== expected) {
+        reject(new Error(`chunk is ${buffer.length} bytes, expected ${expected}`));
+        return;
+      }
+      if (!canAccept(0)) {
+        reject(new Error("disk filled up during upload; aborting to protect the server"));
+        return;
+      }
+      let fd;
+      try {
+        fd = fs.openSync(destination, start === 0 ? "w" : "r+");
+        fs.writeSync(fd, buffer, 0, buffer.length, start);
+      } catch (error) {
+        reject(error);
+        return;
+      } finally {
+        if (fd !== undefined) fs.closeSync(fd);
+      }
+      resolve(buffer.length);
+    });
+  });
+}
+
+function finalizeChunkedUpload(session) {
+  return new Promise((resolve, reject) => {
+    const temporary = `${session.destination}.part`;
+    fs.rename(temporary, session.destination, (error) => {
+      if (error) reject(error);
+      else resolve({ bytes: session.total });
+    });
+  });
+}
+
+function dropUploadSession(roomId) {
+  const session = uploadSessions.get(roomId);
+  if (!session) return;
+  uploadSessions.delete(roomId);
+  busyRooms.delete(roomId);
+  fs.rm(`${session.destination}.part`, { force: true }, () => {});
+}
+
 function receiveUpload(req, destination, expectedBytes) {
   return new Promise((resolve, reject) => {
     const temporary = `${destination}.part`;
@@ -1362,6 +1468,23 @@ async function handle(req, res) {
       });
     }
 
+    // Lets a reloaded page pick up an interrupted upload instead of starting
+    // the whole file again.
+    if (rest === "/source/status" && req.method === "GET") {
+      if (!isOwner(req, room) && !senderHoldsHostSeat(req, room, null)) {
+        return json(res, 403, { ok: false, error: "需要建房时的令牌，或先成为房主" });
+      }
+      const session = uploadSessions.get(room.id);
+      return json(res, 200, {
+        ok: true,
+        uploading: Boolean(session),
+        received: session?.received ?? 0,
+        total: session?.total ?? 0,
+        episodeId: session?.episode?.id ?? null,
+        name: session?.episode?.name ?? null,
+      });
+    }
+
     if (rest === "/source" && req.method === "PUT") {
       // Uploading an episode is running the screening, not owning the room: the
       // sitting host must be able to do it even when their browser has no token
@@ -1369,7 +1492,9 @@ async function handle(req, res) {
       if (!isOwner(req, room) && !senderHoldsHostSeat(req, room, null)) {
         return json(res, 403, { ok: false, error: "需要建房时的令牌，或先成为房主" });
       }
-      if (busyRooms.has(room.id)) {
+      // A chunked upload holds busyRooms for its whole run; only a *different*
+      // uploader should be turned away.
+      if (busyRooms.has(room.id) && !uploadSessions.has(room.id)) {
         return json(res, 409, {
           ok: false,
           error: "this room is already uploading or processing; wait for it to finish",
@@ -1395,36 +1520,118 @@ async function handle(req, res) {
         });
       }
 
-      if ((room.episodes?.length ?? 0) >= MAX_EPISODES) {
+      // A continuing chunked upload already owns its episode slot.
+      if (!uploadSessions.has(room.id) && (room.episodes?.length ?? 0) >= MAX_EPISODES) {
         return json(res, 409, {
           ok: false,
           error: `每个房间最多 ${MAX_EPISODES} 集，先删掉一集或另开房间`,
         });
       }
 
-      busyRooms.add(room.id);
+      const range = parseContentRange(req.headers["content-range"]);
       const filename = decodeURIComponent(String(req.headers["x-filename"] ?? "upload"));
-      const episode = {
-        id: crypto.randomUUID().slice(0, 8),
-        name: filename,
-        bytes: 0,
-        durationSec: 0,
-        segments: 0,
-        status: "transcoding",
-        createdAt: Date.now(),
-      };
-      const destination = sourcePath(room.id, safeExtension(filename), episode.id);
-      // Each episode owns a directory; nothing else creates it for us.
-      fs.mkdirSync(episodeDir(room.id, episode.id), { recursive: true });
-      room.episodes = [...(room.episodes ?? []), episode];
-      room.currentEpisodeId = room.currentEpisodeId ?? episode.id;
-      // Only a room that cannot play anything yet reports the upload state as its
-      // own status; a live screening stays live while a second episode processes.
-      updateRoom(room.id, {
-        status: room.status === "live" || room.status === "ended" ? room.status : "transcoding",
-        error: null,
-        progress: null,
-      });
+
+      // Chunked upload: Cloudflare rejects bodies over 100 MB, so the browser
+      // slices the file. Each slice carries "bytes <start>-<end>/<total>".
+      if (range) {
+        let session = uploadSessions.get(room.id);
+        if (!session) {
+          if (range.start !== 0) {
+            return json(res, 409, { ok: false, error: "分片会话已失效，请重新上传", received: 0 });
+          }
+          if (range.total > MAX_UPLOAD_BYTES) {
+            return json(res, 413, {
+              ok: false,
+              error: `文件超过上限（${Math.round(MAX_UPLOAD_BYTES / 1048576)} MiB）`,
+            });
+          }
+          busyRooms.add(room.id);
+          const created = createEpisode(room, filename);
+          session = { ...created, total: range.total, received: 0, updatedAt: Date.now() };
+          uploadSessions.set(room.id, session);
+        } else if (range.start === 0) {
+          // A fresh start over an existing session: the previous attempt died.
+          // Reuse the episode and truncate, so a retry never piles up episodes.
+          try {
+            fs.truncateSync(`${session.destination}.part`, 0);
+          } catch {
+            /* no partial file yet */
+          }
+          session.received = 0;
+          session.total = range.total;
+          session.episode.name = filename;
+          session.episode.status = "transcoding";
+          session.updatedAt = Date.now();
+        }
+        if (range.total !== session.total) {
+          return json(res, 409, { ok: false, error: "分片总大小与本次上传不一致", received: session.received });
+        }
+        if (range.start !== session.received) {
+          // Tell the client where the server actually is: a lost response must
+          // not force a 1 GB re-upload.
+          return json(res, 409, {
+            ok: false,
+            error: `分片不连续，应从 ${session.received} 开始`,
+            received: session.received,
+          });
+        }
+
+        let received;
+        try {
+          received = await receiveChunk(
+            req,
+            `${session.destination}.part`,
+            range.start,
+            range.end - range.start + 1,
+          );
+        } catch (error) {
+          dropUploadSession(room.id);
+          session.episode.status = "failed";
+          const anyReady = (getRoom(room.id)?.episodes ?? []).some((entry) => entry.status === "ready");
+          updateRoom(room.id, anyReady ? { error: error.message } : { status: "failed", error: error.message });
+          return json(res, 400, { ok: false, error: error.message });
+        }
+
+        session.received = range.end + 1;
+        session.updatedAt = Date.now();
+
+        if (session.received < session.total) {
+          return json(res, 202, {
+            ok: true,
+            complete: false,
+            received: session.received,
+            total: session.total,
+            episodeId: session.episode.id,
+          });
+        }
+
+        try {
+          await finalizeChunkedUpload(session);
+        } catch (error) {
+          dropUploadSession(room.id);
+          session.episode.status = "failed";
+          const anyReady = (getRoom(room.id)?.episodes ?? []).some((entry) => entry.status === "ready");
+          updateRoom(room.id, anyReady ? { error: error.message } : { status: "failed", error: error.message });
+          return json(res, 400, { ok: false, error: error.message });
+        }
+
+        uploadSessions.delete(room.id);
+        busyRooms.delete(room.id);
+        session.episode.bytes = session.total;
+        updateRoom(room.id, { error: null });
+        log(`room ${room.id}: received ${(session.total / 1e6).toFixed(1)} MB of ${filename} in chunks (episode ${session.episode.id})`);
+        enqueueTranscode(getRoom(room.id), session.destination, session.episode.id);
+        return json(res, 202, {
+          ok: true,
+          complete: true,
+          bytes: session.total,
+          episodeId: session.episode.id,
+          status: getRoom(room.id)?.status,
+        });
+      }
+
+      busyRooms.add(room.id);
+      const { episode, destination } = createEpisode(room, filename);
 
       let result;
       try {
@@ -1637,6 +1844,20 @@ function scanExternalEpisodes() {
 sweepIdleRooms();
 scanExternalEpisodes();
 setInterval(() => sweepIdleRooms(), 60_000).unref();
+
+// A client that vanishes mid-upload would otherwise hold busyRooms forever.
+setInterval(() => {
+  const now = Date.now();
+  for (const [roomId, session] of uploadSessions) {
+    if (now - session.updatedAt > UPLOAD_SESSION_TTL_MS) {
+      log(`room ${roomId}: dropping stale upload session`);
+      session.episode.status = "failed";
+      const anyReady = (getRoom(roomId)?.episodes ?? []).some((entry) => entry.status === "ready");
+      updateRoom(roomId, anyReady ? { error: "上传超时" } : { status: "failed", error: "上传超时" });
+      dropUploadSession(roomId);
+    }
+  }
+}, 60_000).unref();
 setInterval(scanExternalEpisodes, 30_000).unref();
 
 server.listen(API_PORT, "127.0.0.1", () => log(`api + tracker on http://127.0.0.1:${API_PORT}`));

@@ -325,7 +325,7 @@
         uploadRow.hidden = !(token || iAmHostNow) || episodes.length >= 3;
 
         const busy = ["uploading", "transcoding", "queued"].includes(room.status) || processing;
-        uploadButton.disabled = busy;
+        uploadButton.disabled = busy && !resumableUpload;
         // Ready to begin, already running (restart), or finished (replay): all
         // three can start a screening; the button just says which it is.
         const canStart = ["ready", "live", "ended"].includes(room.status);
@@ -343,6 +343,10 @@
           const percent = room.progress.percent * 100;
           uploadBar.style.width = `${percent}%`;
           uploadHint.textContent = `处理中 ${percent.toFixed(0)}%${room.progress.speed ? ` · ${room.progress.speed}` : ""}`;
+        } else if (resumableUpload && !room.progress) {
+          uploadBar.style.width = `${(resumableUpload.received / resumableUpload.total) * 100}%`;
+          uploadHint.textContent =
+            `上次上传中断：已收到 ${humanBytes(resumableUpload.received)}，重新选择同一文件会接着传`;
         } else if (room.status === "ready" && room.sourceName) {
           uploadBar.style.width = "100%";
           uploadHint.textContent =
@@ -805,6 +809,17 @@
       refreshRoom();
       setInterval(refreshRoom, 3000);
 
+      // Probe for an interrupted upload at the very end: fetchUploadStatus reads
+      // `viewerId`, which is declared further down (TDZ until the script finishes).
+      window.setTimeout(() => {
+        fetchUploadStatus()
+          .then((status) => {
+            resumableUpload = status?.uploading && status.received ? status : null;
+            refreshRoom();
+          })
+          .catch(() => {});
+      }, 0);
+
       document.getElementById("copyLink").addEventListener("click", async () => {
         try {
           await navigator.clipboard.writeText(location.href);
@@ -830,7 +845,29 @@
         });
       }
 
-      uploadButton.addEventListener("click", () => {
+      // An interrupted upload leaves the room in "transcoding" with nothing
+      // actually running, which would disable the upload button forever.
+      let resumableUpload = null;
+
+      // An interrupted upload lives on the server for 10 minutes; ask before
+      // starting so a reload continues instead of re-sending the whole file.
+      async function fetchUploadStatus() {
+        try {
+          const response = await fetch(`/api/rooms/${roomId}/source/status`, {
+            headers: {
+              "x-room-token": token ?? "",
+              "x-viewer-id": viewerId ?? "",
+              "x-peer-id": window.__screening?.stats?.().peerId ?? "",
+            },
+          });
+          if (!response.ok) return null;
+          return await response.json();
+        } catch {
+          return null;
+        }
+      }
+
+      uploadButton.addEventListener("click", async () => {
         const file = fileInput.files?.[0];
         if (!file) {
           ownerError.textContent = "先选一个视频文件。";
@@ -839,48 +876,118 @@
         ownerError.textContent = "";
         uploadButton.disabled = true;
         uploadHint.textContent = "上传中 0%";
+        resumableUpload = null;
 
-        // XHR rather than fetch: upload progress is the only feedback during a
-        // multi-minute transfer, and fetch still cannot report it.
-        const request = new XMLHttpRequest();
-        request.open("PUT", `/api/rooms/${roomId}/source`);
-        request.setRequestHeader("x-room-token", token ?? "");
-        // 无令牌的房主靠这个自证；缺了它 /source 会 403
-        request.setRequestHeader("x-viewer-id", viewerId ?? "");
-        request.setRequestHeader("x-peer-id", window.__screening?.stats?.().peerId ?? "");
-        request.setRequestHeader("x-filename", encodeURIComponent(file.name));
-        request.setRequestHeader("content-type", "application/octet-stream");
+        // Cloudflare rejects request bodies over 100 MB, so the file is sliced
+        // and each slice goes out as its own PUT carrying Content-Range.
+        const CHUNK = 8 * 1024 * 1024;
+        let sent = 0;
 
-        request.upload.addEventListener("progress", (event) => {
-          if (!event.lengthComputable) return;
-          const percent = (event.loaded / event.total) * 100;
-          uploadBar.style.width = `${percent}%`;
-          uploadHint.textContent =
-            `上传中 ${percent.toFixed(0)}% · ${humanBytes(event.loaded)} / ${humanBytes(event.total)}`;
-        });
+        const putChunk = (start, end) =>
+          new Promise((resolve, reject) => {
+            const request = new XMLHttpRequest();
+            request.open("PUT", `/api/rooms/${roomId}/source`);
+            request.setRequestHeader("x-room-token", token ?? "");
+            // 无令牌的房主靠这个自证；缺了它 /source 会 403
+            request.setRequestHeader("x-viewer-id", viewerId ?? "");
+            request.setRequestHeader("x-peer-id", window.__screening?.stats?.().peerId ?? "");
+            request.setRequestHeader("x-filename", encodeURIComponent(file.name));
+            request.setRequestHeader("content-type", "application/octet-stream");
+            request.setRequestHeader("content-range", `bytes ${start}-${end}/${file.size}`);
 
-        request.addEventListener("load", () => {
-          if (request.status >= 200 && request.status < 300) {
-            uploadHint.textContent = "上传完成，开始处理…";
-            refreshRoom();
-            return;
+            request.upload.addEventListener("progress", (event) => {
+              if (!event.lengthComputable) return;
+              const loaded = sent + event.loaded;
+              const percent = (loaded / file.size) * 100;
+              uploadBar.style.width = `${percent}%`;
+              uploadHint.textContent =
+                `上传中 ${percent.toFixed(0)}% · ${humanBytes(loaded)} / ${humanBytes(file.size)}`;
+            });
+
+            request.addEventListener("load", () => {
+              if (request.status >= 200 && request.status < 300) {
+                resolve();
+                return;
+              }
+              let body = null;
+              try {
+                body = JSON.parse(request.responseText);
+              } catch {
+                /* HTML from a proxy, plain text, or empty */
+              }
+              if (request.status === 413 && !body) {
+                reject(new Error("请求体太大，被代理层拒绝（分片应小于 100 MB）"));
+                return;
+              }
+              // 409 带着服务端已收字节数：从那里接上，而不是重传整个文件
+              if (request.status === 409 && Number.isFinite(body?.received)) {
+                const resume = new Error(body.error ?? "分片不连续");
+                resume.resumeAt = body.received;
+                reject(resume);
+                return;
+              }
+              const message = body?.error ?? String(request.responseText ?? "").replace(/<[^>]*>/g, " ").trim();
+              reject(new Error(String(message).slice(0, 160) || `HTTP ${request.status}`));
+            });
+
+            request.addEventListener("error", () => {
+              reject(new Error("上传中断（网络断开？）"));
+            });
+
+            request.send(file.slice(start, end + 1));
+          });
+
+        // A 1.3 GB upload over a tunnel will hit a flaky minute somewhere; one
+        // lost chunk must not cost the whole transfer.
+        const sendChunk = async (start, end) => {
+          for (let attempt = 0; ; attempt += 1) {
+            try {
+              await putChunk(start, end);
+              return null;
+            } catch (error) {
+              if (Number.isFinite(error.resumeAt)) return error.resumeAt;
+              if (attempt >= 3) throw error;
+              const wait = 800 * 2 ** attempt;
+              uploadHint.textContent = `分片重试 ${attempt + 1}/3 · ${Math.round(wait / 1000) || 1}s 后继续`;
+              await new Promise((resolve) => setTimeout(resolve, wait));
+            }
           }
-          uploadButton.disabled = false;
-          let message = request.responseText;
-          try {
-            message = JSON.parse(request.responseText).error ?? message;
-          } catch {
-            /* plain text body */
+        };
+
+        try {
+          let offset = 0;
+          const previous = await fetchUploadStatus();
+          // Same size but a different name means the host swapped files; splice
+          // would silently mix two videos, so only resume when both match.
+          const sameFile =
+            previous?.uploading &&
+            previous.total === file.size &&
+            previous.received < file.size &&
+            (!previous.name || previous.name === file.name);
+          if (sameFile) {
+            offset = previous.received;
+            sent = offset;
+            uploadHint.textContent = `续传，从 ${humanBytes(offset)} 继续`;
           }
-          ownerError.textContent = `上传失败：${message}`;
-        });
-
-        request.addEventListener("error", () => {
+          while (offset < file.size) {
+            const end = Math.min(offset + CHUNK, file.size) - 1;
+            const resumeAt = await sendChunk(offset, end);
+            if (resumeAt === null) {
+              offset = end + 1;
+            } else {
+              // Trust the server: it may be ahead (lost response) or behind
+              // (restart). 0 means start over, which the server truncates for us.
+              offset = resumeAt;
+            }
+            sent = offset;
+          }
+          uploadBar.style.width = "100%";
+          uploadHint.textContent = "上传完成，开始处理…";
+          refreshRoom();
+        } catch (error) {
           uploadButton.disabled = false;
-          ownerError.textContent = "上传中断（网络断开？）。";
-        });
-
-        request.send(file);
+          ownerError.textContent = `上传失败：${error.message}`;
+        }
       });
 
       async function start(delaySec) {
