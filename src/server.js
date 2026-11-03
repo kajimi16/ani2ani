@@ -569,10 +569,25 @@ function voteKey(person) {
  */
 function senderHoldsHostSeat(req, room, body) {
   const viewerId = String(body?.viewerId ?? req.headers["x-viewer-id"] ?? "");
-  if (!viewerId) return false;
   // Stored on the room, so it survives the entry aging out of `clients` — a host
   // who reloads stops reporting under the old peerId immediately.
-  if (room.hostViewerId) return room.hostViewerId === viewerId;
+  if (viewerId && room.hostViewerId && room.hostViewerId === viewerId) return true;
+
+  // viewerId lives in localStorage, which is per origin: opening the same room via
+  // http://ip:8080 and https://domain gives two different identities. A host who
+  // switched addresses is still host by peerId, so accept that too — but only from
+  // the address that peer last reported from, not from anybody who can read the
+  // participant list.
+  const peerId = String(body?.selfPeerId ?? req.headers["x-peer-id"] ?? "");
+  if (peerId && peerId === room.hostPeerId) {
+    const entry = [...clients.values()].find(
+      (candidate) => candidate.peerId === peerId && Date.now() - candidate.lastSeen < LIVE_WINDOW_MS,
+    );
+    const addr = originAddress(req);
+    if (entry?.addr && addr && entry.addr === addr) return true;
+  }
+
+  if (!viewerId) return false;
   const hostEntry = [...clients.values()].find(
     (entry) => entry.peerId === room.hostPeerId && Date.now() - entry.lastSeen < LIVE_WINDOW_MS,
   );

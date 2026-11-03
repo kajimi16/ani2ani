@@ -820,7 +820,13 @@
       function ownerRequest(path, options = {}) {
         return fetch(`/api/rooms/${roomId}${path}`, {
           ...options,
-          headers: { ...(options.headers ?? {}), "x-room-token": token, "x-viewer-id": viewerId ?? "" },
+          headers: {
+            ...(options.headers ?? {}),
+            "x-room-token": token,
+            "x-viewer-id": viewerId ?? "",
+            // 换过域名时 viewerId 会变，服务端靠 peerId + 来源地址认人
+            "x-peer-id": window.__screening?.stats?.().peerId ?? "",
+          },
         });
       }
 
@@ -841,6 +847,7 @@
         request.setRequestHeader("x-room-token", token ?? "");
         // 无令牌的房主靠这个自证；缺了它 /source 会 403
         request.setRequestHeader("x-viewer-id", viewerId ?? "");
+        request.setRequestHeader("x-peer-id", window.__screening?.stats?.().peerId ?? "");
         request.setRequestHeader("x-filename", encodeURIComponent(file.name));
         request.setRequestHeader("content-type", "application/octet-stream");
 
