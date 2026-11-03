@@ -25,9 +25,13 @@ if ! command -v caddy >/dev/null; then
   systemctl disable --now caddy  # 用自己的单元，避免两套配置打架
 fi
 
-mkdir -p /srv
-if [[ ! -d /srv/ani2ani/.git ]]; then
-  git clone --depth 1 https://github.com/kajimi16/ani2ani.git /srv/ani2ani
+# 代码来自校内工作区，而不是 GitHub：远端可能落后于本地提交，直接 clone
+# 会把旧版本部署上去。先 rsync，再执行本脚本：
+#   rsync -az --delete --exclude '{.git,data*,node_modules,run*,logs*,certs,hls}' \
+#     ./ root@<vps>:/srv/ani2ani/
+if [[ ! -f /srv/ani2ani/package.json ]]; then
+  echo "先把代码同步到 /srv/ani2ani（见 deploy.md 的 rsync 命令），再运行本脚本" >&2
+  exit 1
 fi
 cd /srv/ani2ani
 npm ci
